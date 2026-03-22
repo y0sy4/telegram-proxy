@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Flowseal/tg-ws-proxy/internal/config"
 	"github.com/Flowseal/tg-ws-proxy/internal/proxy"
@@ -20,8 +22,41 @@ import (
 
 var appVersion = "2.0.0"
 
+// checkAndKillExisting checks if another instance is running and terminates it
+func checkAndKillExisting() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	exeName := filepath.Base(exe)
+	
+	// Find existing process (excluding current one)
+	cmd := exec.Command("wmic", "process", "where", fmt.Sprintf("name='%s' AND processid!='%d'", exeName, os.Getpid()), "get", "processid")
+	output, err := cmd.Output()
+	if err != nil {
+		return
+	}
+	
+	// Parse PIDs and kill them
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "ProcessId" {
+			continue
+		}
+		// Kill the old process
+		exec.Command("taskkill", "/F", "/PID", line).Run()
+	}
+	
+	// Wait for processes to terminate
+	time.Sleep(1 * time.Second)
+}
+
 func main() {
-	// Parse flags
+	// Check for existing instances and terminate them (Windows only)
+	if os.PathSeparator == '\\' {
+		checkAndKillExisting()
+	}
 	port := flag.Int("port", 1080, "Listen port")
 	host := flag.String("host", "127.0.0.1", "Listen host")
 	dcIP := flag.String("dc-ip", "", "Target DC IPs (comma-separated, e.g., 2:149.154.167.220,4:149.154.167.220)")
