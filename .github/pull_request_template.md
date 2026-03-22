@@ -1,34 +1,41 @@
-name: Pull Request
-description: Submit a pull request
-title: "[PR] "
-labels: ["enhancement"]
-body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for contributing to TG WS Proxy Go!
-  - type: textarea
-    id: description
-    attributes:
-      label: Description
-      description: What does this PR do?
-      placeholder: This PR adds/fixes...
-    validations:
-      required: true
-  - type: textarea
-    id: testing
-    attributes:
-      label: Testing
-      description: How did you test this?
-      placeholder: I tested on Windows/Linux/macOS...
-    validations:
-      required: true
-  - type: checkboxes
-    id: checklist
-    attributes:
-      label: Checklist
-      options:
-        - label: I have tested this locally
-          required: true
-        - label: Code follows project guidelines
-          required: true
+<!-- Спасибо за ваш вклад в проект! Пожалуйста, заполните эту форму -->
+
+## Описание изменений
+<!-- Опишите, что вы изменили и почему -->
+
+## Тип изменений
+<!-- Отметьте соответствующие пункты -->
+
+- [ ] 🐛 Исправление бага
+- [ ] ✨ Новая функция
+- [ ] 📝 Обновление документации
+- [ ] ⚡ Улучшение производительности
+- [ ] 🔒 Исправление безопасности
+- [ ] 🎨 Рефакторинг кода
+- [ ] 🧪 Добавление тестов
+- [ ] Другое: _______
+
+## Проверка
+<!-- Убедитесь, что вы выполнили следующие действия -->
+
+- [ ] Я протестировал изменения локально
+- [ ] Код следует стилю проекта
+- [ ] Я добавил комментарии к сложным участкам кода
+- [ ] Я обновил документацию (если необходимо)
+- [ ] Я проверил, что нет конфликтов слияния
+
+## Тестирование
+<!-- Опишите, как вы тестировали изменения -->
+
+**ОС:** Windows / macOS / Linux
+
+**Шаги для тестирования:**
+1. 
+2. 
+3. 
+
+## Скриншоты (если применимо)
+<!-- Добавьте скриншоты, если изменения влияют на UI -->
+
+## Дополнительные заметки
+<!-- Любая дополнительная информация, которая может быть полезна -->

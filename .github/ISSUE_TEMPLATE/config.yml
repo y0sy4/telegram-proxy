@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: ❓ Частые вопросы (FAQ)
+    url: https://github.com/y0sy4/tg-ws-proxy-go/blob/master/FAQ.md
+    about: Ответы на популярные вопросы
+  - name: 💬 Обсуждения
+    url: https://github.com/y0sy4/tg-ws-proxy-go/discussions
+    about: Задайте вопрос или поделитесь идеей
+  - name: 📖 Документация
+    url: https://github.com/y0sy4/tg-ws-proxy-go#readme
+    about: Полная документация проекта
