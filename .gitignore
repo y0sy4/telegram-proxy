@@ -5,6 +5,7 @@
 *.so
 *.dylib
 TgWsProxy*
+releases/
 bin/
 
 # Test
