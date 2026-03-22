@@ -3,7 +3,6 @@ package telegram
 
 import (
 	"fmt"
-	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -12,32 +11,12 @@ import (
 // ConfigureProxy opens Telegram's proxy configuration URL.
 // Returns true if successful, false otherwise.
 func ConfigureProxy(host string, port int, username, password string) bool {
-	// Build tg:// proxy URL with proper encoding
-	// Format: tg://proxy?server=host&port=port&user=username&pass=password
-	params := url.Values{}
-	params.Set("server", host)
-	params.Set("port", fmt.Sprintf("%d", port))
+	// Use tg://socks format (same as original Python version)
+	// Format: tg://socks?server=host&port=port
+	proxyURL := fmt.Sprintf("tg://socks?server=%s&port=%d", host, port)
 	
-	if username != "" {
-		params.Set("user", username)
-	}
-	if password != "" {
-		params.Set("pass", password)
-	}
-	
-	// Try both formats
-	urls := []string{
-		fmt.Sprintf("tg://proxy?%s", params.Encode()),
-		fmt.Sprintf("tg://socks?%s", params.Encode()),
-	}
-	
-	for _, testURL := range urls {
-		if openURL(testURL) {
-			return true
-		}
-	}
-	
-	return false
+	// Open URL using system default handler
+	return openURL(proxyURL)
 }
 
 // openURL opens a URL in the default browser/application.
@@ -47,18 +26,19 @@ func openURL(url string) bool {
 
 	switch runtime.GOOS {
 	case "windows":
-		cmd = "cmd"
-		args = []string{"/c", "start"}
+		// Use rundll32 to open URL - more reliable for protocol handlers
+		cmd = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
 	case "darwin":
 		cmd = "open"
+		args = []string{url}
 	case "linux":
 		cmd = "xdg-open"
+		args = []string{url}
 	default:
 		return false
 	}
 
-	args = append(args, url)
-	
 	err := exec.Command(cmd, args...).Start()
 	return err == nil
 }
