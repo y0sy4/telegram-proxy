@@ -281,38 +281,12 @@ func splitDCIP(s string) []string {
 	if s == "" {
 		return nil
 	}
-	result := []string{}
-	for _, part := range splitString(s, ",") {
-		part = trimSpace(part)
+	result := make([]string, 0)
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
 		if part != "" {
 			result = append(result, part)
 		}
 	}
 	return result
-}
-
-func splitString(s, sep string) []string {
-	result := []string{}
-	start := 0
-	for i := 0; i <= len(s)-len(sep); i++ {
-		if s[i:i+len(sep)] == sep {
-			result = append(result, s[start:i])
-			start = i + len(sep)
-			i = start - 1
-		}
-	}
-	result = append(result, s[start:])
-	return result
-}
-
-func trimSpace(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }

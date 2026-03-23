@@ -9,12 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	CurrentVersion = "2.0.0"
+	CurrentVersion = "2.0.5"
 	RepoURL        = "https://api.github.com/repos/y0sy4/tg-ws-proxy-go/releases/latest"
 )
 
@@ -170,7 +171,12 @@ func splitVersion(v string) []int {
 	parts := strings.Split(v, ".")
 	result := make([]int, len(parts))
 	for i, p := range parts {
-		fmt.Sscanf(p, "%d", &result[i])
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			result[i] = 0
+		} else {
+			result[i] = n
+		}
 	}
 	return result
 }

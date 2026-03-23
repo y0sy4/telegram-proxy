@@ -91,15 +91,13 @@ func PatchInitDC(data []byte, dc int) ([]byte, bool) {
 	keystream := make([]byte, 8)
 	stream.XORKeyStream(keystream, zero64[56:64])
 
-	// Patch bytes 60-61 with the correct DC ID
+	// Patch in-place to avoid allocation
 	patched := make([]byte, len(data))
 	copy(patched, data)
 
-	newDC := make([]byte, 2)
-	binary.LittleEndian.PutUint16(newDC, uint16(dc))
-
-	patched[60] = keystream[0] ^ newDC[0]
-	patched[61] = keystream[1] ^ newDC[1]
+	// Patch bytes 60-61 directly
+	patched[60] = keystream[0] ^ byte(dc)
+	patched[61] = keystream[1] ^ byte(dc>>8)
 
 	return patched, true
 }

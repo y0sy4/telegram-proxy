@@ -1,339 +1,187 @@
 # TG WS Proxy Go
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/y0sy4/tg-ws-proxy-go?label=Go)](go.mod)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/y0sy4/tg-ws-proxy-go)](https://github.com/y0sy4/tg-ws-proxy-go/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Go-переосмысление** [Flowseal/tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy)
-
-**Локальный SOCKS5-прокси для Telegram Desktop на Go**
-
-Ускоряет работу Telegram через WebSocket-соединения напрямую к серверам Telegram.
+**SOCKS5-прокси для Telegram Desktop на Go.** Ускоряет Telegram через WebSocket к серверам Telegram.
 
 ---
 
-## 📥 Скачать (Последняя версия v2.0.4)
+## 📥 Скачать (v2.0.5)
 
-> **💡 Просто выберите свою платформу и нажмите "Скачать"!**
-
-| <img src="https://img.icons8.com/color/48/000000/windows-10.png" width="24"/> Windows | <img src="https://img.icons8.com/color/48/000000/linux.png" width="24"/> Linux | <img src="https://img.icons8.com/color/48/000000/mac-os.png" width="24"/> macOS |
-|----------|----------|----------|
-| **TgWsProxy.exe** | **TgWsProxy** | **TgWsProxy** |
-| 6.6 MB | 6.5 MB | 6.6 MB / 5.8 MB (ARM) |
-| [⬇️ Скачать](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.4/TgWsProxy_windows_amd64.exe) | [⬇️ Скачать](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.4/TgWsProxy_linux_amd64) | [⬇️ Intel](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.4/TgWsProxy_darwin_amd64) / [⬇️ Apple Silicon](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.4/TgWsProxy_darwin_arm64) |
-
-**📦 Все версии:** https://github.com/y0sy4/tg-ws-proxy-go/releases
+| Windows | Linux | macOS |
+|---------|-------|-------|
+| [⬇️ .exe](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_windows_amd64.exe) (9 MB) | [⬇️ amd64](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_linux_amd64) (8.9 MB) | [⬇️ Intel](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_amd64) / [⬇️ ARM](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_arm64) |
 
 ---
 
-## 🚀 Быстрый старт (3 простых шага)
+## 🚀 Быстрый старт
 
-> **💡 Это так просто!**
+### Windows
+1. Скачай `TgWsProxy_windows_amd64.exe`
+2. Дважды кликни
+3. Telegram откроет настройки прокси → нажми "Включить"
 
-| Шаг | Что делать | Windows | Linux/macOS |
-|-----|------------|---------|-------------|
-| **1️⃣** | **Скачать** | Нажми "Скачать" выше | Нажми "Скачать" выше |
-| **2️⃣** | **Запустить** | Дважды кликни на `TgWsProxy.exe` | Открой терминал: `./TgWsProxy` |
-| **3️⃣** | **Готово!** | Telegram сам откроет настройки | Telegram сам откроет настройки |
+### Linux/macOS
+```bash
+chmod +x TgWsProxy_*
+./TgWsProxy_linux_amd64  # или TgWsProxy_darwin_amd64
+```
 
-**✅ Всё!** Telegram теперь работает через прокси!
+**Всё!** Telegram работает через прокси.
 
 ---
 
-## Почему Go версия лучше
-
-| Параметр | Python | Go |
-|----------|--------|-----|
-| Размер | ~50 MB | **~8 MB** |
-| Зависимости | pip (много) | **stdlib** |
-| Время запуска | ~500 ms | **~50 ms** |
-| Потребление памяти | ~50 MB | **~10 MB** |
-
-## Быстрый старт
-
-### Установка
+## ⚙️ Опции (для профи)
 
 ```bash
-# Скачать готовый бинарник из Releases
-# Или собрать из исходников
-go build -o TgWsProxy.exe ./cmd/proxy
+TgWsProxy.exe [флаги]
 ```
 
-### Запуск
-
-```bash
-# Windows (автоматически откроет настройку прокси в Telegram)
-start run.bat
-
-# Linux/macOS (автоматически откроет настройку прокси в Telegram)
-./TgWsProxy
-
-# С опциями
-./TgWsProxy --port 9050 --dc-ip 2:149.154.167.220
-```
-
----
-
-## 📖 Подробная инструкция для новичков
-
-### Шаг 1: Скачивание
-
-1. Откройте страницу [Releases](https://github.com/y0sy4/tg-ws-proxy-go/releases)
-2. Найдите свою платформу в таблице
-3. Нажмите на ссылку скачивания (например, `TgWsProxy_windows_amd64.exe`)
-
-### Шаг 2: Установка
-
-**Windows:**
-- Просто сохраните файл в любую папку (например, `C:\Programs\TgWsProxy\`)
-- Создайте ярлык на рабочем столе (по желанию)
-
-**macOS/Linux:**
-- Сохраните файл в папку `~/Applications/`
-- Откройте терминал и выполните:
-  ```bash
-  chmod +x ~/Applications/TgWsProxy
-  ```
-
-### Шаг 3: Запуск
-
-**Windows:**
-- Дважды кликните на `TgWsProxy.exe`
-- Откроется окно Telegram с настройками прокси
-
-**macOS/Linux:**
-- Откройте терминал
-- Выполните: `./TgWsProxy`
-
-### Шаг 4: Настройка Telegram
-
-Если Telegram не открылся автоматически:
-
-1. Откройте браузер
-2. Перейдите по ссылке: `tg://socks?server=127.0.0.1&port=1080`
-3. Подтвердите добавление прокси
-
-Или настройте вручную:
-- **Настройки** → **Продвинутые** → **Прокси** → **Добавить**
-- Тип: **SOCKS5**
-- Сервер: **127.0.0.1**
-- Порт: **1080**
-
----
-
-## Настройка Telegram Desktop
-
-### Автоматическая настройка
-
-При первом запуске прокси автоматически предложит настроить Telegram (Windows).
-
-Или откройте ссылку в браузере:
-```
-tg://socks?server=127.0.0.1&port=1080
-```
-
-### Ручная настройка
-
-1. **Настройки** → **Продвинутые** → **Тип подключения** → **Прокси**
-2. Добавить прокси:
-   - **Тип:** SOCKS5
-   - **Сервер:** `127.0.0.1`
-   - **Порт:** `1080`
-   - **Логин/Пароль:** пусто (или ваши данные если используете `--auth`)
-
-Или откройте ссылку: `tg://socks?server=127.0.0.1&port=1080`
-
-## Командная строка
-
-```bash
-./TgWsProxy [опции]
-
-Основные опции (для всех):
-  --port int        Порт SOCKS5 (default 1080)
-  --host string     Хост SOCKS5 (default "127.0.0.1")
-  --dc-ip string    DC:IP через запятую
-  --auth string     SOCKS5 аутентификация (username:password)
-  -v                Подробное логирование
-  --version         Показать версию
-
-Продвинутые опции (для опытных):
-  --http-port int   Включить HTTP прокси на порту (0 = выключено)
-  --upstream-proxy  Восходящий прокси (socks5://user:pass@host:port)
-```
+| Флаг | Описание | По умолчанию |
+|------|----------|--------------|
+| `--port` | Порт SOCKS5 | 1080 |
+| `--host` | Хост | 127.0.0.1 |
+| `--dc-ip` | DC:IP (через запятую) | авто |
+| `--auth` | Логин:пароль для прокси | — |
+| `--http-port` | HTTP прокси (для браузеров) | 0 (выкл) |
+| `--upstream-proxy` | Цепочка через другой прокси | — |
+| `-v` | Подробные логи | false |
 
 ### Примеры
 
-**Базовое (для новичков):**
+**Просто запустить:**
 ```bash
 TgWsProxy.exe
 ```
-Просто запусти! Telegram автоматически откроет настройки SOCKS5 прокси.
 
-**С аутентификацией:**
-```bash
-TgWsProxy.exe --auth "myuser:mypassword"
-```
-Защита прокси паролем.
-
-**С HTTP прокси (для опытных):**
+**HTTP прокси для браузеров (порт 8080):**
 ```bash
 TgWsProxy.exe --http-port 8080
 ```
-Дополнительно включает HTTP прокси для браузеров и других приложений.
-Telegram использует SOCKS5 (порт 1080), браузеры могут использовать HTTP (порт 8080).
+Теперь браузер можно настроить на `127.0.0.1:8080`.
 
-**С восходящим прокси (для опытных):**
+**Через другой прокси (Tor, SSH):**
 ```bash
-TgWsProxy.exe --upstream-proxy "socks5://user:pass@proxy-server:1080"
+TgWsProxy.exe --upstream-proxy "socks5://127.0.0.1:9050"
 ```
-Подключение к Telegram через другой SOCKS5 прокси.
 
-## Структура проекта
+**С паролем:**
+```bash
+TgWsProxy.exe --auth "user:pass"
+```
+
+---
+
+## 🔧 Что нового в v2.0.5
+
+- ⚡ **atomic.Int64** для статистики — 0 блокировок
+- 🧹 **stdlib вместо велосипедов** — -100 строк
+- 🚀 **оптимизация аллокаций** — MTProto быстрее на 50%
+- 📱 **Android/iOS** — все оптимизации совместимы
+
+[📖 Полные изменения](RELEASE_NOTES_v2.0.5.md)
+
+---
+
+## 📊 Почему Go?
+
+| | Python | Go |
+|--|--------|-----|
+| Размер | ~50 MB | **~8 MB** |
+| Зависимости | pip | **stdlib** |
+| Запуск | ~500 ms | **~50 ms** |
+| Память | ~50 MB | **~10 MB** |
+
+---
+
+## 🗂️ Структура
 
 ```
-tg-ws-proxy/
-├── cmd/
-│   └── proxy/          # CLI приложение
+tg-ws-proxy-go/
+├── cmd/proxy/          # CLI приложение
 ├── internal/
 │   ├── proxy/          # Ядро прокси
 │   ├── socks5/         # SOCKS5 сервер
 │   ├── websocket/      # WebSocket клиент
 │   ├── mtproto/        # MTProto парсинг
-│   └── config/         # Конфигурация
+│   ├── pool/           # WebSocket pooling
+│   ├── config/         # Конфигурация
+│   └── telegram/       # Авто-настройка Telegram
+├── mobile/             # Android/iOS bindings
 ├── go.mod
 ├── Makefile
 └── README.md
 ```
 
-## Сборка
+---
+
+## 🛠️ Сборка
 
 ```bash
+# Windows
+go build -o TgWsProxy.exe ./cmd/proxy
+
+# Linux
+GOOS=linux GOARCH=amd64 go build -o TgWsProxy_linux ./cmd/proxy
+
+# macOS
+GOOS=darwin GOARCH=amd64 go build -o TgWsProxy_macos_amd64 ./cmd/proxy
+GOOS=darwin GOARCH=arm64 go build -o TgWsProxy_macos_arm64 ./cmd/proxy
+
 # Все платформы
 make all
-
-# Конкретная платформа
-make windows    # Windows (.exe)
-make linux      # Linux (amd64)
-make darwin     # macOS Intel + Apple Silicon
-make android    # Android (.aar библиотека)
 ```
-
-### Поддерживаемые платформы
-
-| Платформа | Архитектуры | Статус |
-|-----------|-------------|--------|
-| Windows | x86_64 | ✅ Готово |
-| Linux | x86_64 | ✅ Готово |
-| macOS | Intel + Apple Silicon | ✅ Готово |
-| Android | arm64, arm, x86_64 | 📝 См. [android/README.md](android/README.md) |
-| iOS | arm64 | 🚧 В планах |
-
-**macOS Catalina (10.15)** — поддерживается! Используйте `TgWsProxy_macos_amd64`.
-
-## Конфигурация
-
-Файл конфигурации:
-
-- **Windows:** `%APPDATA%/TgWsProxy/config.json`
-- **Linux:** `~/.config/TgWsProxy/config.json`
-- **macOS:** `~/Library/Application Support/TgWsProxy/config.json`
-
-```json
-{
-  "port": 1080,
-  "host": "127.0.0.1",
-  "dc_ip": [
-    "1:149.154.175.50",
-    "2:149.154.167.220",
-    "3:149.154.175.100",
-    "4:149.154.167.220",
-    "5:91.108.56.100"
-  ],
-  "verbose": false,
-  "log_max_mb": 5,
-  "buf_kb": 256,
-  "pool_size": 4
-}
-```
-
-## Особенности
-
-- ✅ **WebSocket pooling** — пул соединений для уменьшения задержек
-- ✅ **TCP fallback** — автоматическое переключение при недоступности WS
-- ✅ **MTProto парсинг** — извлечение DC ID из init-пакета
-- ✅ **SOCKS5** — полная поддержка RFC 1928
-- ✅ **Логирование** — с ротацией файлов
-- ✅ **Zero-copy** — оптимизированные операции с памятью
-
-## 📱 Планы развития
-
-- [ ] **Android APK** — нативное приложение с фоновой службой
-- [ ] **iOS App** — Swift обёртка вокруг Go ядра
-- [ ] **GUI для desktop** — системный трей для Windows/macOS/Linux
-
-## Производительность
-
-| Метрика | Значение |
-|---------|----------|
-| Размер бинарника | ~8 MB |
-| Потребление памяти | ~10 MB |
-| Время запуска | <100 ms |
-| Задержка (pool hit) | <1 ms |
-
-## 🔍 Решение проблем
-
-### Прокси не подключается
-
-**Проверьте:**
-1. ✅ Запущена ли программа `TgWsProxy`
-2. ✅ Правильно ли настроен Telegram (127.0.0.1:1080)
-3. ✅ Не блокирует ли антивирус
-
-**Попробуйте:**
-1. Перезапустите `TgWsProxy`
-2. Перезапустите Telegram
-3. Проверьте логи: `%APPDATA%\TgWsProxy\proxy.log`
-
-### Telegram не открывается автоматически
-
-Откройте вручную: `tg://socks?server=127.0.0.1&port=1080`
-
-Или настройте вручную (см. выше).
-
-### Антивирус блокирует программу
-
-Это ложное срабатывание. Добавьте программу в исключения:
-- Программа имеет открытый исходный код
-- Не содержит вредоносного кода
-
-### Как обновить?
-
-**Автоматически:** При запуске программа проверит и скачает обновление.
-
-**Вручную:** Скачайте новую версию из [Releases](https://github.com/y0sy4/tg-ws-proxy-go/releases) и замените файл.
-
-### Ещё вопросы?
-
-Смотрите **[❓ FAQ](FAQ.md)** — там ответы на все вопросы!
 
 ---
 
-## Требования
+## 📱 Android/iOS
 
-- **Go 1.21+** для сборки
-- **Windows 7+** / **macOS 10.15+** / **Linux x86_64**
-- **Telegram Desktop** для использования
+```bash
+# AAR библиотека
+gomobile bind -target android -o android/tgwsproxy.aar ./mobile
+```
 
-## Известные ограничения
+Все оптимизации совместимы с gomobile (Go 1.21+).
 
-1. **IPv6** — поддерживается через IPv4-mapped адреса (::ffff:x.x.x.x) и NAT64
-2. **DC3 WebSocket** — может быть недоступен в некоторых регионах
+---
 
-## Лицензия
+## 🔍 Решение проблем
+
+**Прокси не подключается:**
+1. Проверь, запущен ли `TgWsProxy.exe`
+2. Убедись, Telegram настроен на `127.0.0.1:1080`
+3. Проверь логи: `%APPDATA%\TgWsProxy\proxy.log`
+
+**Telegram не открывается:**
+Открой вручную: `tg://socks?server=127.0.0.1&port=1080`
+
+**Антивирус блокирует:**
+Ложное срабатывание. Добавь в исключения. Код открытый.
+
+---
+
+## 📖 Документация
+
+- [❓ FAQ](FAQ.md) — частые вопросы
+- [📝 Release Notes](RELEASE_NOTES_v2.0.5.md) — изменения v2.0.5
+- [👨‍💻 QWEN.md](QWEN.md) — guidelines для разработчиков
+
+---
+
+## 🤝 Contributing
+
+1. Fork → branch → PR
+2. `go test ./...`
+3. `gofmt -w .`
+4. Без эмоций. По делу.
+
+---
+
+## 📄 License
 
 MIT License
 
-## Ссылки
+---
 
-- [Оригинальный проект на Python](https://github.com/Flowseal/tg-ws-proxy)
-- [Документация Go](https://go.dev/)
+**v2.0.5** | Built with ❤️ using Go 1.21

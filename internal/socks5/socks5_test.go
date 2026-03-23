@@ -34,7 +34,7 @@ func TestHandleGreeting_Success(t *testing.T) {
 	// Send valid greeting with no-auth method
 	go client.Write([]byte{0x05, 0x01, 0x00})
 
-	nmethods, err := HandleGreeting(server)
+	nmethods, err := HandleGreeting(server, &AuthConfig{})
 	if err != nil {
 		t.Fatalf("HandleGreeting failed: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestHandleGreeting_UnsupportedVersion(t *testing.T) {
 	// Send SOCKS4 greeting
 	go client.Write([]byte{0x04, 0x01, 0x00})
 
-	_, err := HandleGreeting(server)
+	_, err := HandleGreeting(server, &AuthConfig{})
 	if err != ErrUnsupportedVersion {
 		t.Errorf("Expected ErrUnsupportedVersion, got %v", err)
 	}
@@ -72,7 +72,7 @@ func TestHandleGreeting_NoAuthNotSupported(t *testing.T) {
 	// Send greeting without no-auth method
 	go client.Write([]byte{0x05, 0x01, 0x01})
 
-	_, err := HandleGreeting(server)
+	_, err := HandleGreeting(server, &AuthConfig{})
 	if err != ErrNoAuthAccepted {
 		t.Errorf("Expected ErrNoAuthAccepted, got %v", err)
 	}

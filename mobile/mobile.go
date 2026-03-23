@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Flowseal/tg-ws-proxy/internal/config"
 	"github.com/Flowseal/tg-ws-proxy/internal/proxy"
@@ -38,17 +39,22 @@ func Start(host string, port int, dcIP string, verbose bool) string {
 	if err != nil {
 		return fmt.Sprintf("Failed to open log file: %v", err)
 	}
-	log.SetOutput(f)
-	log.SetFlags(log.Ldate | log.Ltime)
+	logger := log.New(f, "", log.Ldate|log.Ltime)
 
 	var ctx context.Context
 	ctx, cancel = context.WithCancel(context.Background())
 
-	server = proxy.NewServer(cfg)
-	if err := server.Start(ctx); err != nil {
+	server, err = proxy.NewServer(cfg, logger)
+	if err != nil {
 		cancel()
-		return fmt.Sprintf("Failed to start proxy: %v", err)
+		return fmt.Sprintf("Failed to create server: %v", err)
 	}
+
+	go func() {
+		if err := server.Start(ctx); err != nil {
+			cancel()
+		}
+	}()
 
 	return "OK"
 }
@@ -58,9 +64,6 @@ func Stop() string {
 	if cancel != nil {
 		cancel()
 	}
-	if server != nil {
-		server.Stop()
-	}
 	return "OK"
 }
 
@@ -69,13 +72,7 @@ func GetStatus() string {
 	if server == nil {
 		return "Not running"
 	}
-	stats := server.GetStats()
-	return fmt.Sprintf("Connections: %d | WS: %d | TCP: %d | Bytes Up: %d | Bytes Down: %d",
-		stats.ConnectionsTotal,
-		stats.ConnectionsWS,
-		stats.ConnectionsTCP,
-		stats.BytesUp,
-		stats.BytesDown)
+	return "Running" // Simplified for mobile
 }
 
 // parseDCIP parses DC IP configuration string.
@@ -83,11 +80,11 @@ func parseDCIP(s string) []string {
 	if s == "" {
 		return nil
 	}
-	result := []string{}
-	for _, part := range split(s, ",") {
-		trimmed := trim(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
+	result := make([]string, 0)
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
 		}
 	}
 	return result
@@ -101,32 +98,6 @@ func getLogDir() string {
 	}
 	// Fallback to temp directory
 	return os.TempDir()
-}
-
-// Helper functions for string manipulation (avoiding strings package issues with gomobile)
-func split(s, sep string) []string {
-	result := []string{}
-	start := 0
-	for i := 0; i <= len(s)-len(sep); i++ {
-		if s[i:i+len(sep)] == sep {
-			result = append(result, s[start:i])
-			start = i + len(sep)
-		}
-	}
-	result = append(result, s[start:])
-	return result
-}
-
-func trim(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
-		end--
-	}
-	return s[start:end]
 }
 
 // Dummy function to use net package (required for SOCKS5)

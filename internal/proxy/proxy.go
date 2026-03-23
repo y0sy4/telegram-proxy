@@ -2,7 +2,9 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Flowseal/tg-ws-proxy/internal/config"
@@ -79,87 +82,66 @@ var dcOverrides = map[int]int{
 
 // Stats holds proxy statistics.
 type Stats struct {
-	mu                 sync.Mutex
-	ConnectionsTotal   int64
-	ConnectionsWS      int64
-	ConnectionsTCP     int64
-	ConnectionsHTTP    int64
-	ConnectionsPass    int64
-	WSErrors           int64
-	BytesUp            int64
-	BytesDown          int64
-	PoolHits           int64
-	PoolMisses         int64
+	ConnectionsTotal atomic.Int64
+	ConnectionsWS    atomic.Int64
+	ConnectionsTCP   atomic.Int64
+	ConnectionsHTTP  atomic.Int64
+	ConnectionsPass  atomic.Int64
+	WSErrors         atomic.Int64
+	BytesUp          atomic.Int64
+	BytesDown        atomic.Int64
+	PoolHits         atomic.Int64
+	PoolMisses       atomic.Int64
 }
 
 func (s *Stats) addConnectionsTotal(n int64) {
-	s.mu.Lock()
-	s.ConnectionsTotal += n
-	s.mu.Unlock()
+	s.ConnectionsTotal.Add(n)
 }
 
 func (s *Stats) addConnectionsWS(n int64) {
-	s.mu.Lock()
-	s.ConnectionsWS += n
-	s.mu.Unlock()
+	s.ConnectionsWS.Add(n)
 }
 
 func (s *Stats) addConnectionsTCP(n int64) {
-	s.mu.Lock()
-	s.ConnectionsTCP += n
-	s.mu.Unlock()
+	s.ConnectionsTCP.Add(n)
 }
 
 func (s *Stats) addConnectionsHTTP(n int64) {
-	s.mu.Lock()
-	s.ConnectionsHTTP += n
-	s.mu.Unlock()
+	s.ConnectionsHTTP.Add(n)
 }
 
 func (s *Stats) addConnectionsPass(n int64) {
-	s.mu.Lock()
-	s.ConnectionsPass += n
-	s.mu.Unlock()
+	s.ConnectionsPass.Add(n)
 }
 
 func (s *Stats) addWSErrors(n int64) {
-	s.mu.Lock()
-	s.WSErrors += n
-	s.mu.Unlock()
+	s.WSErrors.Add(n)
 }
 
 func (s *Stats) addBytesUp(n int64) {
-	s.mu.Lock()
-	s.BytesUp += n
-	s.mu.Unlock()
+	s.BytesUp.Add(n)
 }
 
 func (s *Stats) addBytesDown(n int64) {
-	s.mu.Lock()
-	s.BytesDown += n
-	s.mu.Unlock()
+	s.BytesDown.Add(n)
 }
 
 func (s *Stats) addPoolHits(n int64) {
-	s.mu.Lock()
-	s.PoolHits += n
-	s.mu.Unlock()
+	s.PoolHits.Add(n)
 }
 
 func (s *Stats) addPoolMisses(n int64) {
-	s.mu.Lock()
-	s.PoolMisses += n
-	s.mu.Unlock()
+	s.PoolMisses.Add(n)
 }
 
 func (s *Stats) Summary() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	hits := s.PoolHits.Load()
+	misses := s.PoolMisses.Load()
 	return fmt.Sprintf("total=%d ws=%d tcp=%d http=%d pass=%d err=%d pool=%d/%d up=%s down=%s",
-		s.ConnectionsTotal, s.ConnectionsWS, s.ConnectionsTCP,
-		s.ConnectionsHTTP, s.ConnectionsPass, s.WSErrors,
-		s.PoolHits, s.PoolHits+s.PoolMisses,
-		humanBytes(s.BytesUp), humanBytes(s.BytesDown))
+		s.ConnectionsTotal.Load(), s.ConnectionsWS.Load(), s.ConnectionsTCP.Load(),
+		s.ConnectionsHTTP.Load(), s.ConnectionsPass.Load(), s.WSErrors.Load(),
+		hits, hits+misses,
+		humanBytes(s.BytesUp.Load()), humanBytes(s.BytesDown.Load()))
 }
 
 // Server represents the TG WS Proxy server.
@@ -527,35 +509,18 @@ func (s *Server) handleIPv6Connection(conn net.Conn, ipv6Addr string, port uint1
 // extractIPv4 tries to extract IPv4 from IPv4-mapped IPv6 address.
 func extractIPv4(ipv6 string) string {
 	// Check for ::ffff: prefix (IPv4-mapped)
+	// Example: ::ffff:192.0.2.1
 	if strings.HasPrefix(strings.ToLower(ipv6), "::ffff:") {
-		return ipv6[7:]
-	}
-	// Check for other IPv4-mapped formats
-	parts := strings.Split(ipv6, ":")
-	if len(parts) >= 6 {
-		// Try to parse last 2 parts as hex IPv4
-		if len(parts[6]) == 4 && len(parts[7]) == 4 {
-			// This is a more complex case, skip for now
-		}
+		return strings.TrimPrefix(ipv6, "::ffff:")
 	}
 	return ""
 }
 
 // extractIPv4FromNAT64 extracts IPv4 from NAT64 IPv6 address.
+// Currently returns empty string as NAT64 is not fully supported.
 func extractIPv4FromNAT64(ipv6, prefix string) string {
-	// Remove prefix
-	suffix := strings.TrimPrefix(ipv6, prefix)
-	// NAT64 embeds IPv4 in last 32 bits
-	parts := strings.Split(suffix, ":")
-	if len(parts) >= 2 {
-		lastParts := parts[len(parts)-2:]
-		if len(lastParts) == 2 {
-			// Parse hex to decimal
-			// Format: :xxxx:yyyy where xxxx.yyyy is IPv4 in hex
-			// This is simplified - real implementation would parse properly
-			return "" // For now, return empty to indicate not supported
-		}
-	}
+	// NAT64 embeds IPv4 in last 32 bits of the IPv6 address
+	// This is a placeholder for future implementation
 	return ""
 }
 
@@ -818,17 +783,15 @@ func (s *Server) logDebug(format string, args ...interface{}) {
 // Helper functions
 
 func ipToUint32(ip string) uint32 {
-	parts := strings.Split(ip, ".")
-	if len(parts) != 4 {
+	ipObj := net.ParseIP(ip)
+	if ipObj == nil {
 		return 0
 	}
-	var result uint32
-	for i, part := range parts {
-		var n uint32
-		fmt.Sscanf(part, "%d", &n)
-		result |= n << (24 - uint(i)*8)
+	ipObj = ipObj.To4()
+	if ipObj == nil {
+		return 0
 	}
-	return result
+	return binary.BigEndian.Uint32(ipObj)
 }
 
 func isTelegramIP(ip string) bool {
@@ -845,22 +808,10 @@ func isHTTPTransport(data []byte) bool {
 	if len(data) < 5 {
 		return false
 	}
-	return bytesEqual(data[:5], []byte("POST ")) ||
-		bytesEqual(data[:4], []byte("GET ")) ||
-		bytesEqual(data[:5], []byte("HEAD ")) ||
-		bytesEqual(data[:8], []byte("OPTIONS "))
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.HasPrefix(data, []byte("POST ")) ||
+		bytes.HasPrefix(data, []byte("GET ")) ||
+		bytes.HasPrefix(data, []byte("HEAD ")) ||
+		bytes.HasPrefix(data, []byte("OPTIONS "))
 }
 
 func humanBytes(n int64) string {
