@@ -13,15 +13,16 @@ import (
 
 // Config holds the proxy configuration.
 type Config struct {
-	Port      int      `json:"port"`
-	Host      string   `json:"host"`
-	DCIP      []string `json:"dc_ip"`
-	Verbose   bool     `json:"verbose"`
-	AutoStart bool     `json:"autostart"`
-	LogMaxMB  float64  `json:"log_max_mb"`
-	BufKB     int      `json:"buf_kb"`
-	PoolSize  int      `json:"pool_size"`
-	Auth      string   `json:"auth"` // username:password
+	Port          int      `json:"port"`
+	Host          string   `json:"host"`
+	DCIP          []string `json:"dc_ip"`
+	Verbose       bool     `json:"verbose"`
+	AutoStart     bool     `json:"autostart"`
+	LogMaxMB      float64  `json:"log_max_mb"`
+	BufKB         int      `json:"buf_kb"`
+	PoolSize      int      `json:"pool_size"`
+	Auth          string   `json:"auth"` // username:password
+	UpstreamProxy string   `json:"upstream_proxy"`
 }
 
 // DefaultConfig returns the default configuration.

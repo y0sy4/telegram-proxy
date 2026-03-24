@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +22,7 @@ import (
 	"github.com/Flowseal/tg-ws-proxy/internal/pool"
 	"github.com/Flowseal/tg-ws-proxy/internal/socks5"
 	"github.com/Flowseal/tg-ws-proxy/internal/websocket"
+	"golang.org/x/net/proxy"
 )
 
 const (
@@ -146,35 +149,78 @@ func (s *Stats) Summary() string {
 
 // Server represents the TG WS Proxy server.
 type Server struct {
-	config      *config.Config
-	dcOpt       map[int]string
-	wsPool      *pool.WSPool
-	stats       *Stats
-	wsBlacklist map[pool.DCKey]bool
-	dcFailUntil map[pool.DCKey]time.Time
-	mu          sync.RWMutex
-	listener    net.Listener
-	logger      *log.Logger
+	config          *config.Config
+	dcOpt           map[int]string
+	wsPool          *pool.WSPool
+	stats           *Stats
+	wsBlacklist     map[pool.DCKey]bool
+	dcFailUntil     map[pool.DCKey]time.Time
+	mu              sync.RWMutex
+	listener        net.Listener
+	logger          *log.Logger
+	upstreamProxy   string
 }
 
 // NewServer creates a new proxy server.
-func NewServer(cfg *config.Config, logger *log.Logger) (*Server, error) {
+func NewServer(cfg *config.Config, logger *log.Logger, upstreamProxy string) (*Server, error) {
 	dcOpt, err := config.ParseDCIPList(cfg.DCIP)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Server{
-		config:      cfg,
-		dcOpt:       dcOpt,
-		wsPool:      pool.NewWSPool(cfg.PoolSize, defaultPoolMaxAge),
-		stats:       &Stats{},
-		wsBlacklist: make(map[pool.DCKey]bool),
-		dcFailUntil: make(map[pool.DCKey]time.Time),
-		logger:      logger,
+		config:        cfg,
+		dcOpt:         dcOpt,
+		wsPool:        pool.NewWSPool(cfg.PoolSize, defaultPoolMaxAge),
+		stats:         &Stats{},
+		wsBlacklist:   make(map[pool.DCKey]bool),
+		dcFailUntil:   make(map[pool.DCKey]time.Time),
+		logger:        logger,
+		upstreamProxy: upstreamProxy,
 	}
 
 	return s, nil
+}
+
+// dialWithUpstream creates a connection, optionally routing through an upstream proxy.
+func (s *Server) dialWithUpstream(network, addr string, timeout time.Duration) (net.Conn, error) {
+	if s.upstreamProxy == "" {
+		return net.DialTimeout(network, addr, timeout)
+	}
+
+	// Parse upstream proxy URL
+	u, err := url.Parse(s.upstreamProxy)
+	if err != nil {
+		return nil, fmt.Errorf("parse upstream proxy: %w", err)
+	}
+
+	switch u.Scheme {
+	case "socks5", "socks":
+		var auth *proxy.Auth
+		if u.User != nil {
+			password, _ := u.User.Password()
+			auth = &proxy.Auth{
+				User:     u.User.Username(),
+				Password: password,
+			}
+		}
+		dialer, err := proxy.SOCKS5(network, u.Host, auth, proxy.Direct)
+		if err != nil {
+			return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
+		}
+		return dialer.Dial(network, addr)
+
+	case "http", "https":
+		// Use http.Transport with Proxy for HTTP CONNECT
+		transport := &http.Transport{
+			Proxy:           http.ProxyURL(u),
+			TLSHandshakeTimeout: timeout,
+		}
+		return transport.Dial(network, addr)
+
+	default:
+		return nil, fmt.Errorf("unsupported upstream proxy scheme: %s", u.Scheme)
+	}
 }
 
 // Start starts the proxy server.
@@ -407,7 +453,9 @@ func (s *Server) getWebSocket(dcKey pool.DCKey, targetIP string, domains []strin
 		s.logInfo("[%s] DC%d%s (%s:%d) -> %s via %s", label, dc, mediaTag, dst, port, url, targetIP)
 
 		// Connect using targetIP, but use domain for TLS handshake
-		ws, wsErr = websocket.Connect(targetIP, domain, "/apiws", wsTimeout)
+		ws, wsErr = websocket.ConnectWithDialer(targetIP, domain, "/apiws", wsTimeout, func(network, addr string) (net.Conn, error) {
+			return s.dialWithUpstream(network, addr, wsTimeout)
+		})
 		if wsErr == nil {
 			allRedirects = false
 			break
@@ -450,7 +498,7 @@ func (s *Server) getWebSocket(dcKey pool.DCKey, targetIP string, domains []strin
 }
 
 func (s *Server) handlePassthrough(conn net.Conn, dst string, port uint16, label string) {
-	remoteConn, err := net.DialTimeout("tcp", net.JoinHostPort(dst, fmt.Sprintf("%d", port)), 10*time.Second)
+	remoteConn, err := s.dialWithUpstream("tcp", net.JoinHostPort(dst, fmt.Sprintf("%d", port)), 10*time.Second)
 	if err != nil {
 		s.logWarning("[%s] passthrough failed to %s: %v", label, dst, err)
 		conn.Write(socks5.Reply(socks5.ReplyFail))
@@ -465,7 +513,7 @@ func (s *Server) handlePassthrough(conn net.Conn, dst string, port uint16, label
 // handleIPv6Connection handles IPv6 connections via dual-stack or IPv4-mapped addresses.
 func (s *Server) handleIPv6Connection(conn net.Conn, ipv6Addr string, port uint16, label string) {
 	// Try direct IPv6 first
-	remoteConn, err := net.DialTimeout("tcp6", net.JoinHostPort(ipv6Addr, fmt.Sprintf("%d", port)), 10*time.Second)
+	remoteConn, err := s.dialWithUpstream("tcp6", net.JoinHostPort(ipv6Addr, fmt.Sprintf("%d", port)), 10*time.Second)
 	if err == nil {
 		s.logInfo("[%s] IPv6 direct connection successful", label)
 		defer remoteConn.Close()
@@ -525,7 +573,7 @@ func extractIPv4FromNAT64(ipv6, prefix string) string {
 }
 
 func (s *Server) handleTCPFallback(conn net.Conn, dst string, port uint16, init []byte, label string, dc int, isMedia bool) {
-	remoteConn, err := net.DialTimeout("tcp", net.JoinHostPort(dst, fmt.Sprintf("%d", port)), 10*time.Second)
+	remoteConn, err := s.dialWithUpstream("tcp", net.JoinHostPort(dst, fmt.Sprintf("%d", port)), 10*time.Second)
 	if err != nil {
 		s.logWarning("[%s] TCP fallback to %s:%d failed: %v", label, dst, port, err)
 		return
@@ -672,7 +720,9 @@ func (s *Server) warmupPool() {
 			go func(dcKey pool.DCKey, targetIP string, domains []string) {
 				for s.wsPool.NeedRefill(dcKey) {
 					for _, domain := range domains {
-						ws, err := websocket.Connect(targetIP, domain, "/apiws", wsConnectTimeout)
+						ws, err := websocket.ConnectWithDialer(targetIP, domain, "/apiws", wsConnectTimeout, func(network, addr string) (net.Conn, error) {
+							return s.dialWithUpstream(network, addr, wsConnectTimeout)
+						})
 						if err == nil {
 							s.wsPool.Put(dcKey, ws)
 							break

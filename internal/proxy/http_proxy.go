@@ -10,14 +10,43 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"golang.org/x/net/proxy"
 )
 
 // HTTPProxy represents an HTTP proxy server.
 type HTTPProxy struct {
-	port         int
-	verbose      bool
-	logger       *log.Logger
+	port          int
+	verbose       bool
+	logger        *log.Logger
 	upstreamProxy *url.URL
+}
+
+// dialWithUpstream creates a connection, optionally routing through an upstream proxy.
+func (h *HTTPProxy) dialWithUpstream(network, addr string) (net.Conn, error) {
+	if h.upstreamProxy == nil {
+		return net.Dial(network, addr)
+	}
+
+	switch h.upstreamProxy.Scheme {
+	case "socks5", "socks":
+		// Use proxy package for SOCKS5
+		proxyDialer, err := proxy.FromURL(h.upstreamProxy, proxy.Direct)
+		if err != nil {
+			return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
+		}
+		return proxyDialer.Dial(network, addr)
+
+	case "http", "https":
+		// Use http.Transport with Proxy for HTTP CONNECT
+		transport := &http.Transport{
+			Proxy: http.ProxyURL(h.upstreamProxy),
+		}
+		return transport.Dial(network, addr)
+
+	default:
+		return nil, fmt.Errorf("unsupported upstream proxy scheme: %s", h.upstreamProxy.Scheme)
+	}
 }
 
 // NewHTTPProxy creates a new HTTP proxy server.
@@ -87,18 +116,18 @@ func (h *HTTPProxy) handleConnect(conn net.Conn, req *http.Request) {
 	if !strings.Contains(host, ":") {
 		host = host + ":80"
 	}
-	
-	// Connect to target
-	target, err := net.Dial("tcp", host)
+
+	// Connect to target (with upstream proxy if configured)
+	target, err := h.dialWithUpstream("tcp", host)
 	if err != nil {
 		conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
 	defer target.Close()
-	
+
 	// Send success response
 	conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-	
+
 	// Bridge connections
 	go io.Copy(target, conn)
 	io.Copy(conn, target)

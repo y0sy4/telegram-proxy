@@ -44,7 +44,7 @@ func Start(host string, port int, dcIP string, verbose bool) string {
 	var ctx context.Context
 	ctx, cancel = context.WithCancel(context.Background())
 
-	server, err = proxy.NewServer(cfg, logger)
+	server, err = proxy.NewServer(cfg, logger, "")
 	if err != nil {
 		cancel()
 		return fmt.Sprintf("Failed to create server: %v", err)

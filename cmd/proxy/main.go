@@ -116,15 +116,24 @@ func main() {
 	if *auth != "" {
 		cfg.Auth = *auth
 	}
-
-	// Setup logging - default to file if not specified
-	logPath := *logFile
-	if logPath == "" {
-		// Use default log file in app config directory
-		appDir := getAppDir()
-		logPath = filepath.Join(appDir, "proxy.log")
+	if *upstreamProxy != "" {
+		cfg.UpstreamProxy = *upstreamProxy
 	}
-	logger := setupLogging(logPath, cfg.LogMaxMB, cfg.Verbose)
+
+	// Setup logging - log to stdout if verbose, otherwise to file
+	var logger *log.Logger
+	logPath := *logFile
+	if cfg.Verbose && logPath == "" {
+		// Verbose mode: log to stdout
+		logger = setupLogging("", cfg.LogMaxMB, cfg.Verbose)
+	} else {
+		// File mode: log to file (default to app dir if not specified)
+		if logPath == "" {
+			appDir := getAppDir()
+			logPath = filepath.Join(appDir, "proxy.log")
+		}
+		logger = setupLogging(logPath, cfg.LogMaxMB, cfg.Verbose)
+	}
 
 	// Log advanced features usage and start HTTP proxy
 	if *httpPort != 0 {
@@ -146,7 +155,7 @@ func main() {
 	}
 
 	// Create and start server
-	server, err := proxy.NewServer(cfg, logger)
+	server, err := proxy.NewServer(cfg, logger, cfg.UpstreamProxy)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
@@ -248,8 +257,12 @@ func getAppDir() string {
 
 func setupLogging(logFile string, logMaxMB float64, verbose bool) *log.Logger {
 	flags := log.LstdFlags | log.Lshortfile
-	if verbose {
-		flags |= log.Lshortfile
+
+	// If verbose and no log file specified, log to stdout
+	if verbose && logFile == "" {
+		log.SetOutput(os.Stdout)
+		log.SetFlags(flags)
+		return log.New(os.Stdout, "", flags)
 	}
 
 	// Ensure directory exists
@@ -260,6 +273,8 @@ func setupLogging(logFile string, logMaxMB float64, verbose bool) *log.Logger {
 	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Warning: failed to open log file %s: %v, using stdout", logFile, err)
+		log.SetOutput(os.Stdout)
+		log.SetFlags(flags)
 		return log.New(os.Stdout, "", flags)
 	}
 

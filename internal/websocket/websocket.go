@@ -44,6 +44,12 @@ type WebSocket struct {
 
 // Connect establishes a WebSocket connection to the given domain via IP.
 func Connect(ip, domain, path string, timeout time.Duration) (*WebSocket, error) {
+	return ConnectWithDialer(ip, domain, path, timeout, nil)
+}
+
+// ConnectWithDialer establishes a WebSocket connection using a custom dialer.
+// If dialer is nil, it uses direct connection.
+func ConnectWithDialer(ip, domain, path string, timeout time.Duration, dialFunc func(network, addr string) (net.Conn, error)) (*WebSocket, error) {
 	if path == "" {
 		path = "/apiws"
 	}
@@ -56,18 +62,55 @@ func Connect(ip, domain, path string, timeout time.Duration) (*WebSocket, error)
 	wsKey := base64.StdEncoding.EncodeToString(keyBytes)
 
 	// Dial TLS connection
-	dialer := &net.Dialer{Timeout: timeout}
-	tlsConfig := &tls.Config{
-		ServerName:         domain,
-		InsecureSkipVerify: true,
+	var rawConn net.Conn
+	var err error
+
+	if dialFunc != nil {
+		// Use custom dialer
+		rawConn, err = dialFunc("tcp", net.JoinHostPort(ip, "443"))
+		if err != nil {
+			return nil, fmt.Errorf("dial: %w", err)
+		}
+		// Wrap with TLS
+		tlsConfig := &tls.Config{
+			ServerName:         domain,
+			InsecureSkipVerify: true,
+		}
+		rawConn = tls.Client(rawConn, tlsConfig)
+		// Set handshake timeout
+		if err := rawConn.SetDeadline(time.Now().Add(timeout)); err != nil {
+			rawConn.Close()
+			return nil, err
+		}
+	} else {
+		// Direct connection
+		dialer := &net.Dialer{Timeout: timeout}
+		tlsConfig := &tls.Config{
+			ServerName:         domain,
+			InsecureSkipVerify: true,
+		}
+		rawConn, err = tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(ip, "443"), tlsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("tls dial: %w", err)
+		}
 	}
-	rawConn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(ip, "443"), tlsConfig)
-	if err != nil {
-		return nil, fmt.Errorf("tls dial: %w", err)
+
+	// Clear deadline after handshake
+	if err := rawConn.SetDeadline(time.Time{}); err != nil {
+		rawConn.Close()
+		return nil, err
 	}
 
 	// Set TCP_NODELAY and buffer sizes
-	if tcpConn, ok := rawConn.NetConn().(*net.TCPConn); ok {
+	if tcpConn, ok := rawConn.(*tls.Conn); ok {
+		if netConn := tcpConn.NetConn(); netConn != nil {
+			if tcpNetConn, ok := netConn.(*net.TCPConn); ok {
+				tcpNetConn.SetNoDelay(true)
+				tcpNetConn.SetReadBuffer(256 * 1024)
+				tcpNetConn.SetWriteBuffer(256 * 1024)
+			}
+		}
+	} else if tcpConn, ok := rawConn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 		tcpConn.SetReadBuffer(256 * 1024)
 		tcpConn.SetWriteBuffer(256 * 1024)
@@ -115,7 +158,7 @@ func Connect(ip, domain, path string, timeout time.Duration) (*WebSocket, error)
 	}
 
 	return &WebSocket{
-		conn:    rawConn,
+		conn:    rawConn.(*tls.Conn),
 		reader:  reader,
 		writer:  bufio.NewWriter(rawConn),
 		maskKey: make([]byte, 4),
