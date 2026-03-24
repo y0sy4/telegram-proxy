@@ -11,7 +11,7 @@
 
 | Windows | Linux | macOS |
 |---------|-------|-------|
-| [⬇️ .exe](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_windows_amd64.exe) (9 MB) | [⬇️ amd64](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_linux_amd64) (8.9 MB) | [⬇️ Intel](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_amd64) / [⬇️ ARM](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_arm64) |
+| [⬇️ .exe](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy.exe) (9 MB) | [⬇️ amd64](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_linux_amd64) (8.9 MB) | [⬇️ Intel](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_amd64) / [⬇️ ARM](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_arm64) |
 
 ---
 
