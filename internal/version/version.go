@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	CurrentVersion = "2.0.5"
+	CurrentVersion = "2.0.6"
 	RepoURL        = "https://api.github.com/repos/y0sy4/tg-ws-proxy-go/releases/latest"
 )
 

@@ -7,11 +7,19 @@
 
 ---
 
-## 📥 Скачать (v2.0.5)
+## 📥 Скачать (v2.0.6)
 
-| Windows | Linux | macOS |
-|---------|-------|-------|
-| [⬇️ .exe](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy.exe) (9 MB) | [⬇️ amd64](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_linux_amd64) (8.9 MB) | [⬇️ Intel](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_amd64) / [⬇️ ARM](https://github.com/y0sy4/tg-ws-proxy-go/releases/download/v2.0.5/TgWsProxy_darwin_arm64) |
+| Версия | Windows | Linux | macOS |
+|--------|---------|-------|-------|
+| **Full** | [⬇️ .exe](.../v2.0.6/TgWsProxy.exe) (9.3 MB) | [⬇️ amd64](.../v2.0.6/TgWsProxy_linux_amd64) (8.9 MB) | [⬇️ Intel](.../v2.0.6/TgWsProxy_darwin_amd64) / [⬇️ ARM](.../v2.0.6/TgWsProxy_darwin_arm64) |
+| **Lite** | [⬇️ .exe](.../v2.0.6/TgWsProxy_lite.exe) (5.5 MB) | [⬇️ amd64](.../v2.0.6/TgWsProxy_lite_linux) (5.3 MB) | [⬇️ Intel](.../v2.0.6/TgWsProxy_lite_darwin) / [⬇️ ARM](.../v2.0.6/TgWsProxy_lite_darwin_arm) |
+
+**Какую версию выбрать?**
+
+| Версия | Размер | Функции | Для кого |
+|--------|--------|---------|----------|
+| **Full** | ~9 MB | Авто-обновление, HTTP proxy, upstream proxy, конфиги, автозапуск Telegram | Обычные пользователи |
+| **Lite** | ~5.3 MB | Только SOCKS5 прокси, `--test-dc` | Роутеры (OpenWRT), серверы, минималисты |
 
 ---
 
@@ -47,6 +55,8 @@ TgWsProxy.exe [флаги]
 | `--http-port` | HTTP прокси (для браузеров) | 0 (выкл) |
 | `--upstream-proxy` | Цепочка через другой прокси | — |
 | `-v` | Подробные логи | false |
+| `--test-dc` | Тест DC и выход | — |
+| `--auto-update` | Авто-обновление | false (безопасность) |
 
 ### Примеры
 
@@ -71,9 +81,39 @@ TgWsProxy.exe --upstream-proxy "socks5://127.0.0.1:9050"
 TgWsProxy.exe --auth "user:pass"
 ```
 
+**Диагностика DC (перед запуском):**
+```bash
+# Проверить доступность Telegram DC
+TgWsProxy.exe --test-dc
+
+# С verbose логами
+TgWsProxy.exe --test-dc -v
+
+# Тест конкретных DC
+TgWsProxy.exe --test-dc --dc-ip "2:149.154.167.220,4:149.154.167.220"
+```
+
+**Авто-обновление (только если доверяете источнику):**
+```bash
+TgWsProxy.exe --auto-update
+```
+⚠️ **Внимание:** Авто-обновление отключено по умолчанию из соображений безопасности. Бинарники скачиваются без проверки GPG-подписи.
+
 ---
 
-## 🔧 Что нового в v2.0.5
+## 🔧 Что нового в v2.0.6
+
+- 🛡️ **Безопасность:** авто-обновление отключено по умолчанию
+- 🔍 **--test-dc:** диагностика доступности Telegram DC
+- 📡 **OpenWRT:** полная поддержка роутеров + документация
+- 🐛 **Issue #5:** решение проблемы с медиа на роутерах
+- 📝 **README:** секция для OpenWRT с примерами
+
+[📖 Полные изменения](RELEASE_NOTES_v2.0.6.md)
+
+---
+
+## 🔧 Что было в v2.0.5
 
 - ⚡ **atomic.Int64** для статистики — 0 блокировок
 - 🧹 **stdlib вместо велосипедов** — -100 строк
@@ -143,6 +183,77 @@ gomobile bind -target android -o android/tgwsproxy.aar ./mobile
 ```
 
 Все оптимизации совместимы с gomobile (Go 1.21+).
+
+---
+
+## 📡 OpenWRT / Роутеры
+
+### Проблема: текст работает, медиа нет
+
+**Причина:** Telegram использует разные DC для текста и медиа. На роутерах некоторые DC могут быть недоступны.
+
+**Решение 1: Использовать конкретный DC IP**
+
+```bash
+# Протестировать DC
+./tg-ws-proxy-go --test-dc
+
+# Запустить с рабочими DC (пример для Issue #5)
+./tg-ws-proxy-go --dc-ip "2:149.154.167.220,4:149.154.167.220" --host 0.0.0.0 --port 1080
+```
+
+**Решение 2: Для веб-версии Telegram**
+
+Добавьте в `/etc/hosts` на роутере:
+```
+149.154.167.220 web.telegram.org telegram.org t.me telesco.pe
+```
+
+**Решение 3: Upstream proxy (для обхода блокировок)**
+
+```bash
+# Через Tor
+./tg-ws-proxy-go --upstream-proxy "socks5://127.0.0.1:9050"
+
+# Через SSH туннель
+./tg-ws-proxy-go --upstream-proxy "socks5://user:pass@proxy-server:port"
+```
+
+### Сборка для OpenWRT (ARM64)
+
+```bash
+# На ПК (кросс-компиляция)
+GOOS=linux GOARCH=arm64 go build -o tg-ws-proxy-go ./cmd/proxy
+
+# Копирование на роутер
+scp tg-ws-proxy-go root@192.168.1.1:/usr/bin/
+chmod +x /usr/bin/tg-ws-proxy-go
+
+# Запуск
+/usr/bin/tg-ws-proxy-go --host 0.0.0.0 --port 1080
+```
+
+### Автозапуск (init.d скрипт)
+
+```bash
+cat > /etc/init.d/tg-ws-proxy << 'EOF'
+#!/bin/sh /etc/rc.common
+
+START=99
+
+start() {
+    /usr/bin/tg-ws-proxy-go --dc-ip "2:149.154.167.220,4:149.154.167.220" --host 0.0.0.0 --port 1080 &
+}
+
+stop() {
+    killall tg-ws-proxy-go
+}
+EOF
+
+chmod +x /etc/init.d/tg-ws-proxy
+/etc/init.d/tg-ws-proxy enable
+/etc/init.d/tg-ws-proxy start
+```
 
 ---
 

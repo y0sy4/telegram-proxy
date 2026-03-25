@@ -1,14 +1,19 @@
 # TG WS Proxy Makefile
 
 BINARY_NAME=TgWsProxy
-VERSION=1.1.3
+VERSION=2.0.6
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: all build clean test windows linux darwin android
+.PHONY: all build clean test windows linux darwin android lite
 
 all: windows linux darwin
 
-build: windows
+build: windows lite
+
+lite:
+	@echo "Building Lite version..."
+	@go build $(LDFLAGS) -o $(BINARY_NAME)_lite ./cmd/lite
+	@echo "Built: $(BINARY_NAME)_lite (minimal build for routers)"
 
 windows:
 	@echo "Building for Windows..."

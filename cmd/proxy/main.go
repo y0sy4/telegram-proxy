@@ -6,11 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,7 +23,7 @@ import (
 	"github.com/Flowseal/tg-ws-proxy/internal/version"
 )
 
-var appVersion = "2.0.0"
+var appVersion = "2.0.6"
 
 // checkAndKillExisting checks if another instance is running and terminates it
 func checkAndKillExisting() {
@@ -74,13 +77,23 @@ func main() {
 	upstreamProxy := flag.String("upstream-proxy", "", "Upstream SOCKS5/HTTP proxy (format: socks5://user:pass@host:port or http://user:pass@host:port)")
 	mtprotoSecret := flag.String("mtproto-secret", "", "MTProto proxy secret (enables MTProto mode)")
 	mtprotoPort := flag.Int("mtproto-port", 0, "MTProto proxy port (requires --mtproto-secret)")
-	
+
+	// Security & diagnostics
+	autoUpdate := flag.Bool("auto-update", false, "Enable automatic update checks (default: false for security)")
+	testDC := flag.Bool("test-dc", false, "Test Telegram DC connectivity and exit")
+
 	showVersion := flag.Bool("version", false, "Show version")
 
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("TG WS Proxy v%s\n", appVersion)
+		os.Exit(0)
+	}
+
+	// Test DC connectivity mode
+	if *testDC {
+		testDCConnectivity(*dcIP, *verbose)
 		os.Exit(0)
 	}
 
@@ -198,28 +211,30 @@ func main() {
 		log.Printf("  Or open: tg://socks?server=%s&port=%d", cfg.Host, proxyPort)
 	}
 
-	// Check for updates and auto-download (non-blocking)
-	go func() {
-		hasUpdate, latest, url, err := version.CheckUpdate()
-		if err != nil {
-			return // Silent fail
-		}
-		if hasUpdate {
-			log.Printf("⚡ NEW VERSION AVAILABLE: v%s (current: v%s)", latest, version.CurrentVersion)
-			log.Printf("   Downloading update...")
-			
-			// Try to download update
-			downloadedPath, err := version.DownloadUpdate(latest)
+	// Check for updates only if explicitly enabled (security first)
+	if *autoUpdate {
+		go func() {
+			hasUpdate, latest, url, err := version.CheckUpdate()
 			if err != nil {
-				log.Printf("   Download failed: %v", err)
-				log.Printf("   Manual download: %s", url)
-				return
+				return // Silent fail
 			}
-			
-			log.Printf("   ✓ Downloaded to: %s", downloadedPath)
-			log.Printf("   Restart the proxy to apply update")
-		}
-	}()
+			if hasUpdate {
+				log.Printf("⚡ NEW VERSION AVAILABLE: v%s (current: v%s)", latest, version.CurrentVersion)
+				log.Printf("   Downloading update...")
+
+				// Try to download update
+				downloadedPath, err := version.DownloadUpdate(latest)
+				if err != nil {
+					log.Printf("   Download failed: %v", err)
+					log.Printf("   Manual download: %s", url)
+					return
+				}
+
+				log.Printf("   ✓ Downloaded to: %s", downloadedPath)
+				log.Printf("   Restart the proxy to apply update")
+			}
+		}()
+	}
 
 	// Handle shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -304,4 +319,130 @@ func splitDCIP(s string) []string {
 		}
 	}
 	return result
+}
+
+// testDCConnectivity tests connectivity to Telegram DCs
+func testDCConnectivity(dcIPList string, verbose bool) {
+	fmt.Println("Testing Telegram DC connectivity...")
+	fmt.Println()
+
+	// Default DCs to test
+	defaultDCs := []string{
+		"2:149.154.167.50",
+		"2:149.154.167.220",
+		"4:149.154.167.91",
+		"4:149.154.167.92",
+		"5:91.108.56.100",
+	}
+
+	// Use provided DCs or defaults
+	testDCs := defaultDCs
+	if dcIPList != "" {
+		testDCs = splitDCIP(dcIPList)
+	}
+
+	type result struct {
+		dc       string
+		ip       string
+		latency  time.Duration
+		success  bool
+		errorMsg string
+	}
+
+	results := make([]result, 0, len(testDCs))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, dc := range testDCs {
+		wg.Add(1)
+		go func(dcEntry string) {
+			defer wg.Done()
+
+			parts := strings.SplitN(dcEntry, ":", 2)
+			if len(parts) != 2 {
+				mu.Lock()
+				results = append(results, result{dc: dcEntry, errorMsg: "invalid format"})
+				mu.Unlock()
+				return
+			}
+
+			dcNum, ip := parts[0], parts[1]
+
+			// Test TCP connection to port 443 (HTTPS/WS)
+			start := time.Now()
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, "443"), 5*time.Second)
+			latency := time.Since(start)
+
+			if err != nil {
+				mu.Lock()
+				results = append(results, result{
+					dc:       dcNum,
+					ip:       ip,
+					success:  false,
+					errorMsg: err.Error(),
+				})
+				mu.Unlock()
+				return
+			}
+			conn.Close()
+
+			mu.Lock()
+			results = append(results, result{
+				dc:      dcNum,
+				ip:      ip,
+				latency: latency,
+				success: true,
+			})
+			mu.Unlock()
+		}(dc)
+	}
+
+	wg.Wait()
+
+	// Sort results: successful first, then by latency
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].success != results[j].success {
+			return results[i].success
+		}
+		return results[i].latency < results[j].latency
+	})
+
+	// Print results
+	successCount := 0
+	var recommended []string
+
+	for _, r := range results {
+		status := "❌"
+		latencyStr := ""
+
+		if r.success {
+			status = "✅"
+			latencyStr = fmt.Sprintf("%dms", r.latency.Milliseconds())
+			successCount++
+			recommended = append(recommended, fmt.Sprintf("%s:%s", r.dc, r.ip))
+		} else {
+			latencyStr = "timeout"
+			if verbose {
+				latencyStr = fmt.Sprintf("error: %s", r.errorMsg)
+			}
+		}
+
+		fmt.Printf("%s DC%-3s %-15s %s\n", status, r.dc, r.ip, latencyStr)
+	}
+
+	fmt.Println()
+	fmt.Printf("Results: %d/%d reachable\n", successCount, len(results))
+
+	if len(recommended) > 0 {
+		fmt.Println()
+		fmt.Println("Recommended configuration:")
+		fmt.Printf("  --dc-ip \"%s\"\n", strings.Join(recommended, ","))
+	}
+
+	if successCount == 0 {
+		fmt.Println()
+		fmt.Println("⚠️  No DCs reachable. Check your internet connection or firewall.")
+		fmt.Println("   If you're in a restricted region, try using --upstream-proxy")
+		fmt.Println("   Example: --upstream-proxy \"socks5://127.0.0.1:9050\" (Tor)")
+	}
 }
