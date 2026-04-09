@@ -128,28 +128,42 @@ func (c *Config) Save() error {
 	return os.WriteFile(configPath, data, 0644)
 }
 
-// ParseDCIPList parses a list of "DC:IP" strings into a map.
-func ParseDCIPList(dcIPList []string) (map[int]string, error) {
-	result := make(map[int]string)
+// ParseDCIPList parses a list of "DC:IP" strings into maps for regular and media connections.
+// Supports "2m:IP" syntax for media-specific IPs.
+// If only "DC:IP" is given (without 'm'), it applies to both regular and media.
+func ParseDCIPList(dcIPList []string) (regular map[int]string, media map[int]string, err error) {
+	regular = make(map[int]string)
+	media = make(map[int]string)
+
 	for _, entry := range dcIPList {
 		if !strings.Contains(entry, ":") {
-			return nil, ErrInvalidDCIPFormat{Entry: entry}
+			return nil, nil, ErrInvalidDCIPFormat{Entry: entry}
 		}
 		parts := strings.SplitN(entry, ":", 2)
 		dcStr, ipStr := parts[0], parts[1]
 
-		dc, err := strconv.Atoi(dcStr)
+		// Check for media suffix (e.g., "2m")
+		isMedia := strings.HasSuffix(dcStr, "m")
+		dcBaseStr := strings.TrimSuffix(dcStr, "m")
+
+		dc, err := strconv.Atoi(dcBaseStr)
 		if err != nil {
-			return nil, ErrInvalidDCIPFormat{Entry: entry}
+			return nil, nil, ErrInvalidDCIPFormat{Entry: entry}
 		}
 
 		if net.ParseIP(ipStr) == nil {
-			return nil, ErrInvalidDCIPFormat{Entry: entry}
+			return nil, nil, ErrInvalidDCIPFormat{Entry: entry}
 		}
 
-		result[dc] = ipStr
+		if isMedia {
+			media[dc] = ipStr
+		} else {
+			// Without 'm' suffix, apply to both regular and media
+			regular[dc] = ipStr
+			media[dc] = ipStr
+		}
 	}
-	return result, nil
+	return regular, media, nil
 }
 
 // ErrInvalidDCIPFormat is returned when DC:IP format is invalid.

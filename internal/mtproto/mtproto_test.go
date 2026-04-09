@@ -1,7 +1,6 @@
 package mtproto
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
@@ -122,15 +121,23 @@ func TestPatchInitDC(t *testing.T) {
 	copy(init[40:56], iv)
 	copy(init[56:64], encrypted)
 
-	// Patch to DC 2
+	// Save original bytes 60-61 for comparison
+	orig60, orig61 := init[60], init[61]
+
+	// Patch to DC 2 (in-place)
 	patched, ok := PatchInitDC(init, 2)
 	if !ok {
 		t.Fatal("Failed to patch init")
 	}
 
-	// Verify patched data is different
-	if bytes.Equal(init, patched) {
-		t.Error("Expected patched data to be different")
+	// In-place patch: returned slice should point to same underlying array
+	if &patched[0] != &init[0] {
+		t.Error("Expected in-place patch (same underlying array)")
+	}
+
+	// Verify bytes 60-61 changed
+	if init[60] == orig60 && init[61] == orig61 {
+		t.Error("Expected patched bytes to differ")
 	}
 
 	// The DC extraction after patching is complex due to CTR mode

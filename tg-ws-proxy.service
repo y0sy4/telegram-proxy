@@ -1,0 +1,29 @@
+[Unit]
+Description=TG WS Proxy Go - Local SOCKS5 proxy for Telegram via WebSocket
+Documentation=https://github.com/y0sy4/tg-ws-proxy-go
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tg-ws-proxy-go --host 0.0.0.0 --port 1080 --log-file /var/log/tg-ws-proxy/proxy.log -v
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/tg-ws-proxy /etc/tg-ws-proxy
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=256M
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Flowseal/tg-ws-proxy/internal/config"
-	"github.com/Flowseal/tg-ws-proxy/internal/proxy"
-	"github.com/Flowseal/tg-ws-proxy/internal/telegram"
-	"github.com/Flowseal/tg-ws-proxy/internal/version"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/config"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/proxy"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/telegram"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/version"
 )
 
 var appVersion = "2.0.6"
@@ -64,7 +64,7 @@ func main() {
 	// Parse flags
 	port := flag.Int("port", 1080, "Listen port")
 	host := flag.String("host", "127.0.0.1", "Listen host")
-	dcIP := flag.String("dc-ip", "", "Target DC IPs (comma-separated, e.g., 2:149.154.167.220,4:149.154.167.220)")
+	dcIP := flag.String("dc-ip", "", "Target DC IPs (comma-separated, e.g., 2:149.154.167.220,2m:149.154.167.222,4:149.154.167.220)")
 	verbose := flag.Bool("v", false, "Verbose logging")
 	logFile := flag.String("log-file", "", "Log file path (default: proxy.log in app dir)")
 	logMaxMB := flag.Float64("log-max-mb", 5, "Max log file size in MB")
@@ -81,6 +81,7 @@ func main() {
 	// Security & diagnostics
 	autoUpdate := flag.Bool("auto-update", false, "Enable automatic update checks (default: false for security)")
 	testDC := flag.Bool("test-dc", false, "Test Telegram DC connectivity and exit")
+	testDCMedia := flag.Bool("test-dc-media", false, "Test both text and media DC connectivity (slower)")
 
 	showVersion := flag.Bool("version", false, "Show version")
 
@@ -93,7 +94,13 @@ func main() {
 
 	// Test DC connectivity mode
 	if *testDC {
-		testDCConnectivity(*dcIP, *verbose)
+		testDCConnectivity(*dcIP, *verbose, false)
+		os.Exit(0)
+	}
+
+	// Test DC + media connectivity mode
+	if *testDCMedia {
+		testDCConnectivity(*dcIP, *verbose, true)
 		os.Exit(0)
 	}
 
@@ -322,64 +329,78 @@ func splitDCIP(s string) []string {
 }
 
 // testDCConnectivity tests connectivity to Telegram DCs
-func testDCConnectivity(dcIPList string, verbose bool) {
-	fmt.Println("Testing Telegram DC connectivity...")
+func testDCConnectivity(dcIPList string, verbose bool, testMedia bool) {
+	fmt.Println("📡 Testing Telegram DC connectivity...")
+	if testMedia {
+		fmt.Println("   Including media/CDN servers...")
+	}
 	fmt.Println()
 
-	// Default DCs to test
-	defaultDCs := []string{
-		"2:149.154.167.50",
-		"2:149.154.167.220",
-		"4:149.154.167.91",
-		"4:149.154.167.92",
-		"5:91.108.56.100",
+	// Default DCs to test (text + media)
+	type dcEntry struct {
+		dc      int
+		ip      string
+		isMedia bool
+	}
+
+	defaultDCs := []dcEntry{
+		{2, "149.154.167.220", false},
+		{2, "149.154.167.220", true},
+		{4, "149.154.167.220", false},
+		{4, "149.154.167.220", true},
+	}
+
+	if testMedia {
+		defaultDCs = append(defaultDCs,
+			dcEntry{2, "149.154.167.151", true},
+			dcEntry{2, "149.154.167.222", true},
+			dcEntry{4, "149.154.166.120", true},
+			dcEntry{4, "149.154.167.118", true},
+		)
 	}
 
 	// Use provided DCs or defaults
-	testDCs := defaultDCs
+	var testEntries []dcEntry
 	if dcIPList != "" {
-		testDCs = splitDCIP(dcIPList)
+		dcMap := splitDCIP(dcIPList)
+		for dc, ip := range dcMap {
+			testEntries = append(testEntries, dcEntry{dc, ip, false})
+			if testMedia {
+				testEntries = append(testEntries, dcEntry{dc, ip, true})
+			}
+		}
+	} else {
+		testEntries = defaultDCs
 	}
 
 	type result struct {
-		dc       string
+		dc       int
 		ip       string
+		isMedia  bool
 		latency  time.Duration
 		success  bool
 		errorMsg string
 	}
 
-	results := make([]result, 0, len(testDCs))
+	results := make([]result, 0, len(testEntries))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	for _, dc := range testDCs {
+	for _, entry := range testEntries {
 		wg.Add(1)
-		go func(dcEntry string) {
+		go func(e dcEntry) {
 			defer wg.Done()
-
-			parts := strings.SplitN(dcEntry, ":", 2)
-			if len(parts) != 2 {
-				mu.Lock()
-				results = append(results, result{dc: dcEntry, errorMsg: "invalid format"})
-				mu.Unlock()
-				return
-			}
-
-			dcNum, ip := parts[0], parts[1]
 
 			// Test TCP connection to port 443 (HTTPS/WS)
 			start := time.Now()
-			conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, "443"), 5*time.Second)
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(e.ip, "443"), 5*time.Second)
 			latency := time.Since(start)
 
 			if err != nil {
 				mu.Lock()
 				results = append(results, result{
-					dc:       dcNum,
-					ip:       ip,
-					success:  false,
-					errorMsg: err.Error(),
+					dc: e.dc, ip: e.ip, isMedia: e.isMedia,
+					success: false, errorMsg: err.Error(),
 				})
 				mu.Unlock()
 				return
@@ -388,18 +409,16 @@ func testDCConnectivity(dcIPList string, verbose bool) {
 
 			mu.Lock()
 			results = append(results, result{
-				dc:      dcNum,
-				ip:      ip,
-				latency: latency,
-				success: true,
+				dc: e.dc, ip: e.ip, isMedia: e.isMedia,
+				latency: latency, success: true,
 			})
 			mu.Unlock()
-		}(dc)
+		}(entry)
 	}
 
 	wg.Wait()
 
-	// Sort results: successful first, then by latency
+	// Sort: successful first, then by latency
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].success != results[j].success {
 			return results[i].success
@@ -409,9 +428,16 @@ func testDCConnectivity(dcIPList string, verbose bool) {
 
 	// Print results
 	successCount := 0
-	var recommended []string
+	mediaSuccess := 0
+	textSuccess := 0
+	var recommendedText []string
+	var recommendedMedia []string
 
 	for _, r := range results {
+		mediaTag := ""
+		if r.isMedia {
+			mediaTag = "m"
+		}
 		status := "❌"
 		latencyStr := ""
 
@@ -419,7 +445,13 @@ func testDCConnectivity(dcIPList string, verbose bool) {
 			status = "✅"
 			latencyStr = fmt.Sprintf("%dms", r.latency.Milliseconds())
 			successCount++
-			recommended = append(recommended, fmt.Sprintf("%s:%s", r.dc, r.ip))
+			if r.isMedia {
+				mediaSuccess++
+				recommendedMedia = append(recommendedMedia, fmt.Sprintf("%dm:%s", r.dc, r.ip))
+			} else {
+				textSuccess++
+				recommendedText = append(recommendedText, fmt.Sprintf("%d:%s", r.dc, r.ip))
+			}
 		} else {
 			latencyStr = "timeout"
 			if verbose {
@@ -427,16 +459,24 @@ func testDCConnectivity(dcIPList string, verbose bool) {
 			}
 		}
 
-		fmt.Printf("%s DC%-3s %-15s %s\n", status, r.dc, r.ip, latencyStr)
+		fmt.Printf("%s DC%-3d%s %-18s %s\n", status, r.dc, mediaTag, r.ip, latencyStr)
 	}
 
 	fmt.Println()
-	fmt.Printf("Results: %d/%d reachable\n", successCount, len(results))
+	fmt.Printf("Results: %d/%d reachable", successCount, len(results))
+	if testMedia {
+		fmt.Printf(" (text: %d, media: %d)", textSuccess, mediaSuccess)
+	}
+	fmt.Println()
 
-	if len(recommended) > 0 {
+	if len(recommendedText) > 0 {
 		fmt.Println()
 		fmt.Println("Recommended configuration:")
-		fmt.Printf("  --dc-ip \"%s\"\n", strings.Join(recommended, ","))
+		combined := recommendedText
+		if len(recommendedMedia) > 0 {
+			combined = append(combined, recommendedMedia...)
+		}
+		fmt.Printf("  --dc-ip \"%s\"\n", strings.Join(combined, ","))
 	}
 
 	if successCount == 0 {

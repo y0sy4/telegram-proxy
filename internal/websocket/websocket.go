@@ -25,6 +25,8 @@ const (
 	OpClose        = 0x8
 	OpPing         = 0x9
 	OpPong         = 0xA
+
+	DefaultPingInterval = 30 * time.Second
 )
 
 var (
@@ -229,8 +231,12 @@ func (w *WebSocket) Recv() ([]byte, error) {
 			w.mu.Lock()
 			w.closed = true
 			w.mu.Unlock()
-			// Send close response
-			w.SendFrame(OpClose, payload[:2], true)
+			// Send close response (RFC 6455: close frame may have 0 or 2+ byte body)
+			if len(payload) >= 2 {
+				w.SendFrame(OpClose, payload[:2], true)
+			} else {
+				w.SendFrame(OpClose, []byte{}, true)
+			}
 			return nil, io.EOF
 
 		case OpPing:
@@ -282,6 +288,43 @@ func (w *WebSocket) Close() error {
 	w.writer.Flush()
 
 	return w.conn.Close()
+}
+
+// IsClosed returns true if the connection has been closed.
+func (w *WebSocket) IsClosed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.closed
+}
+
+// StartPingLoop sends periodic ping frames until the connection is closed.
+// Call this as a goroutine: go ws.StartPingLoop(30 * time.Second)
+func (w *WebSocket) StartPingLoop(interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultPingInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		w.mu.Lock()
+		if w.closed {
+			w.mu.Unlock()
+			return
+		}
+		// Send ping frame
+		frame := BuildFrame(OpPing, []byte{}, true)
+		_, err := w.writer.Write(frame)
+		if err == nil {
+			err = w.writer.Flush()
+		}
+		w.mu.Unlock()
+
+		if err != nil {
+			return // connection closed or error
+		}
+	}
 }
 
 // BuildFrame creates a WebSocket frame.

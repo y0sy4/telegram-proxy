@@ -17,11 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Flowseal/tg-ws-proxy/internal/config"
-	"github.com/Flowseal/tg-ws-proxy/internal/mtproto"
-	"github.com/Flowseal/tg-ws-proxy/internal/pool"
-	"github.com/Flowseal/tg-ws-proxy/internal/socks5"
-	"github.com/Flowseal/tg-ws-proxy/internal/websocket"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/config"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/mtproto"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/pool"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/socks5"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/websocket"
 	"golang.org/x/net/proxy"
 )
 
@@ -35,6 +35,15 @@ const (
 	wsConnectTimeout   = 10 * time.Second
 )
 
+// bufPool provides reusable 256KB buffers to reduce GC pressure.
+// Each buffer is defaultRecvBuf bytes (256KB).
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, defaultRecvBuf)
+		return &buf
+	},
+}
+
 // Telegram IP ranges
 var tgRanges = []struct {
 	lo, hi uint32
@@ -45,7 +54,8 @@ var tgRanges = []struct {
 	{ipToUint32("91.108.0.0"), ipToUint32("91.108.255.255")},
 }
 
-// IP to DC mapping - полный список всех IP Telegram DC
+// IP to DC mapping - полный список всех IP Telegram DC + CDN/media серверов
+// Обновлён на основе community reports (Issues #5, #72, #199) и анализа tg-ws-proxy
 var ipToDC = map[string]struct {
 	DC      int
 	IsMedia bool
@@ -60,22 +70,34 @@ var ipToDC = map[string]struct {
 	"95.161.76.100": {2, false},
 	"149.154.167.151": {2, true}, "149.154.167.222": {2, true},
 	"149.154.167.223": {2, true}, "149.154.162.123": {2, true},
+	// DC2 CDN/media — дополнительные IP из community reports
+	"149.154.167.42": {2, true}, "149.154.167.43": {2, true},
+	"149.154.166.222": {2, true},
 	// DC3
 	"149.154.175.100": {3, false}, "149.154.175.101": {3, false},
 	"149.154.175.102": {3, true},
+	// DC3 CDN/media — дополнительные IP
+	"149.154.175.103": {3, true}, "149.154.175.104": {3, true},
 	// DC4
 	"149.154.167.91": {4, false}, "149.154.167.92": {4, false},
 	"149.154.164.250": {4, true}, "149.154.166.120": {4, true},
 	"149.154.166.121": {4, true}, "149.154.167.118": {4, true},
 	"149.154.165.111": {4, true},
+	// DC4 CDN/media — дополнительные IP из community reports
+	"149.154.167.93": {4, true}, "149.154.167.94": {4, true},
+	"149.154.166.122": {4, true},
 	// DC5
 	"91.108.56.100": {5, false}, "91.108.56.101": {5, false},
 	"91.108.56.116": {5, false}, "91.108.56.126": {5, false},
 	"149.154.171.5": {5, false},
 	"91.108.56.102": {5, true}, "91.108.56.128": {5, true},
 	"91.108.56.151": {5, true},
-	// DC203 (Test DC)
+	// DC5 CDN/media — дополнительные IP
+	"91.108.56.103": {5, true}, "91.108.56.129": {5, true},
+	// DC203 (Test DC) — основной + media IP для CDN
 	"91.105.192.100": {203, false},
+	"91.105.192.101": {203, true},
+	// Примечание: DC203 маппится на DC2 через dcOverrides, поэтому WS использует домены DC2
 }
 
 // DC overrides
@@ -151,19 +173,61 @@ func (s *Stats) Summary() string {
 type Server struct {
 	config          *config.Config
 	dcOpt           map[int]string
+	dcOptMedia      map[int]string
 	wsPool          *pool.WSPool
 	stats           *Stats
-	wsBlacklist     map[pool.DCKey]bool
+	wsBlacklist     map[pool.DCKey]time.Time // blacklist with expiry time (TTL)
 	dcFailUntil     map[pool.DCKey]time.Time
 	mu              sync.RWMutex
 	listener        net.Listener
 	logger          *log.Logger
 	upstreamProxy   string
+	rateLimiter     *connRateLimiter
+	activeConns     sync.WaitGroup // track active connections for graceful shutdown
+}
+
+const blacklistTTL = 10 * time.Minute // auto-clear blacklist after this duration
+const maxConnPerSecPerIP = 10          // max new connections per second from single IP
+
+// connRateLimiter tracks connection rates per IP.
+type connRateLimiter struct {
+	mu       sync.Mutex
+	counters map[string]*ipCounter
+}
+
+type ipCounter struct {
+	count    int
+	windowStart time.Time
+}
+
+func newConnRateLimiter() *connRateLimiter {
+	return &connRateLimiter{
+		counters: make(map[string]*ipCounter),
+	}
+}
+
+// Allow returns true if connection from this IP is allowed.
+func (rl *connRateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	c, ok := rl.counters[ip]
+	if !ok || now.Sub(c.windowStart) > time.Second {
+		rl.counters[ip] = &ipCounter{count: 1, windowStart: now}
+		return true
+	}
+
+	if c.count >= maxConnPerSecPerIP {
+		return false
+	}
+	c.count++
+	return true
 }
 
 // NewServer creates a new proxy server.
 func NewServer(cfg *config.Config, logger *log.Logger, upstreamProxy string) (*Server, error) {
-	dcOpt, err := config.ParseDCIPList(cfg.DCIP)
+	dcOpt, dcOptMedia, err := config.ParseDCIPList(cfg.DCIP)
 	if err != nil {
 		return nil, err
 	}
@@ -171,12 +235,14 @@ func NewServer(cfg *config.Config, logger *log.Logger, upstreamProxy string) (*S
 	s := &Server{
 		config:        cfg,
 		dcOpt:         dcOpt,
+		dcOptMedia:    dcOptMedia,
 		wsPool:        pool.NewWSPool(cfg.PoolSize, defaultPoolMaxAge),
 		stats:         &Stats{},
-		wsBlacklist:   make(map[pool.DCKey]bool),
+		wsBlacklist:   make(map[pool.DCKey]time.Time),
 		dcFailUntil:   make(map[pool.DCKey]time.Time),
 		logger:        logger,
 		upstreamProxy: upstreamProxy,
+		rateLimiter:   newConnRateLimiter(),
 	}
 
 	return s, nil
@@ -257,6 +323,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Accept connections
 	go func() {
 		<-ctx.Done()
+		s.logInfo("shutting down: stopping listener, waiting for active connections (10s)...")
 		s.listener.Close()
 	}()
 
@@ -264,13 +331,46 @@ func (s *Server) Start(ctx context.Context) error {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				// Graceful shutdown — wait for active connections to finish
+				done := make(chan struct{})
+				go func() {
+					s.activeConns.Wait()
+					close(done)
+				}()
+				select {
+				case <-done:
+					s.logInfo("all active connections closed gracefully")
+				case <-time.After(10 * time.Second):
+					s.logWarning("shutdown timeout: some connections still active")
+				}
 				return nil
 			}
 			s.logError("accept: %v", err)
 			continue
 		}
-		go s.handleClient(conn)
+
+		// Rate limit check
+		peerIP := extractIPFromAddr(conn.RemoteAddr().String())
+		if !s.rateLimiter.Allow(peerIP) {
+			s.logWarning("[%s] rate limit exceeded, connection dropped", peerIP)
+			conn.Close()
+			continue
+		}
+
+		s.activeConns.Add(1)
+		go func(c net.Conn) {
+			defer s.activeConns.Done()
+			s.handleClient(c)
+		}(conn)
 	}
+}
+
+func extractIPFromAddr(addr string) string {
+	// addr is usually "ip:port"
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (s *Server) handleClient(conn net.Conn) {
@@ -355,8 +455,8 @@ func (s *Server) handleClient(conn net.Conn) {
 			dcInfo.DC = dcMapping.DC
 			dcInfo.IsMedia = dcMapping.IsMedia
 			dcInfo.Valid = true
-			// Patch init if we have DC override
-			if _, ok := s.dcOpt[dcInfo.DC]; ok {
+			// Patch init if we have DC override (regular or media)
+			if _, ok := s.dcOpt[dcInfo.DC]; ok || s.getTargetIP(dcInfo.DC, dcInfo.IsMedia) != "" {
 				if patched, ok := mtproto.PatchInitDC(initBuf, dcInfo.DC); ok {
 					initData = patched
 					dcInfo.Patched = true
@@ -366,7 +466,8 @@ func (s *Server) handleClient(conn net.Conn) {
 	}
 
 	if !dcInfo.Valid {
-		s.logWarning("[%s] unknown DC for %s:%d -> TCP fallback", label, req.DestAddr, req.DestPort)
+		s.logWarning("[%s] ⚠️  unknown DC for %s:%d -> TCP fallback", label, req.DestAddr, req.DestPort)
+		s.logWarning("[%s] 💡 If media fails, this IP may be a CDN server. Try adding --dc-ip or report at github.com/y0sy4/tg-ws-proxy-go/issues", label)
 		s.handleTCPFallback(conn, req.DestAddr, req.DestPort, initData, label, dcInfo.DC, dcInfo.IsMedia)
 		return
 	}
@@ -374,27 +475,33 @@ func (s *Server) handleClient(conn net.Conn) {
 	dcKey := pool.DCKey{DC: dcInfo.DC, IsMedia: dcInfo.IsMedia}
 	mediaTag := s.mediaTag(dcInfo.IsMedia)
 
-	// Check WS blacklist
+	// Check WS blacklist (with TTL auto-expiry)
 	s.mu.RLock()
-	blacklisted := s.wsBlacklist[dcKey]
+	blTime, isBlacklisted := s.wsBlacklist[dcKey]
 	s.mu.RUnlock()
 
-	if blacklisted {
-		s.logDebug("[%s] DC%d%s WS blacklisted -> TCP fallback", label, dcInfo.DC, mediaTag)
+	if isBlacklisted && time.Now().Before(blTime) {
+		s.logDebug("[%s] DC%d%s WS blacklisted (expires in %.0fs) -> TCP fallback",
+			label, dcInfo.DC, mediaTag, time.Until(blTime).Seconds())
 		s.handleTCPFallback(conn, req.DestAddr, req.DestPort, initData, label, dcInfo.DC, dcInfo.IsMedia)
 		return
+	} else if isBlacklisted {
+		// Blacklist expired — auto-clear
+		s.mu.Lock()
+		delete(s.wsBlacklist, dcKey)
+		s.mu.Unlock()
+		s.logInfo("[%s] DC%d%s blacklist expired, attempting WS again", label, dcInfo.DC, mediaTag)
 	}
 
 	// Get WS timeout based on recent failures
 	wsTimeout := s.getWSTimeout(dcKey)
 	domains := s.getWSDomains(dcInfo.DC, dcInfo.IsMedia)
-	
-	// Get target IP from config, or use the destination IP from request
-	targetIP := s.dcOpt[dcInfo.DC]
+
+	// Get target IP from config (media-specific if configured), or use destination IP
+	targetIP := s.getTargetIP(dcInfo.DC, dcInfo.IsMedia)
 	if targetIP == "" {
-		// Fallback: use the destination IP from the request
 		targetIP = req.DestAddr
-		s.logDebug("[%s] No target IP configured for DC%d, using request dest %s", label, dcInfo.DC, targetIP)
+		s.logDebug("[%s] No target IP configured for DC%d%s, using request dest %s", label, dcInfo.DC, mediaTag, targetIP)
 	}
 
 	// Try to get WS from pool
@@ -428,7 +535,7 @@ func (s *Server) handleClient(conn net.Conn) {
 	}
 
 	// Bridge traffic
-	s.bridgeWS(conn, ws, label, dcInfo.DC, req.DestAddr, req.DestPort, dcInfo.IsMedia, splitter)
+	s.bridgeWS(conn, ws, label, dcKey, req.DestAddr, req.DestPort, splitter)
 }
 
 func (s *Server) getWebSocket(dcKey pool.DCKey, targetIP string, domains []string,
@@ -480,8 +587,9 @@ func (s *Server) getWebSocket(dcKey pool.DCKey, targetIP string, domains []strin
 		// Update blacklist/cooldown
 		s.mu.Lock()
 		if he, ok := wsErr.(*websocket.HandshakeError); ok && he.IsRedirect() && allRedirects {
-			s.wsBlacklist[dcKey] = true
-			s.logWarning("[%s] DC%d%s blacklisted for WS (all 302)", label, dc, mediaTag)
+			s.wsBlacklist[dcKey] = time.Now().Add(blacklistTTL)
+			s.logWarning("[%s] DC%d%s blacklisted for WS (all 302, expires in %.0fm)",
+				label, dc, mediaTag, blacklistTTL.Minutes())
 		} else {
 			s.dcFailUntil[dcKey] = time.Now().Add(dcFailCooldown)
 		}
@@ -573,9 +681,13 @@ func extractIPv4FromNAT64(ipv6, prefix string) string {
 }
 
 func (s *Server) handleTCPFallback(conn net.Conn, dst string, port uint16, init []byte, label string, dc int, isMedia bool) {
+	mediaTag := s.mediaTag(isMedia)
+	s.logDebug("[%s] TCP fallback to %s:%d (DC%d%s)", label, dst, port, dc, mediaTag)
+
 	remoteConn, err := s.dialWithUpstream("tcp", net.JoinHostPort(dst, fmt.Sprintf("%d", port)), 10*time.Second)
 	if err != nil {
-		s.logWarning("[%s] TCP fallback to %s:%d failed: %v", label, dst, port, err)
+		s.logWarning("[%s] ⚠️  TCP fallback to %s:%d failed: %v", label, dst, port, err)
+		s.logWarning("[%s] 💡 If media doesn't load, this DC may be blocked. Try --dc-ip with a working IP", label)
 		return
 	}
 	defer remoteConn.Close()
@@ -589,18 +701,22 @@ func (s *Server) handleTCPFallback(conn net.Conn, dst string, port uint16, init 
 }
 
 func (s *Server) bridgeWS(clientConn net.Conn, ws *websocket.WebSocket, label string,
-	dc int, dst string, port uint16, isMedia bool, splitter *mtproto.MsgSplitter) {
+	dcKey pool.DCKey, dst string, port uint16, splitter *mtproto.MsgSplitter) {
 
-	mediaTag := s.mediaTag(isMedia)
-	dcTag := fmt.Sprintf("DC%d%s", dc, mediaTag)
+	mediaTag := s.mediaTag(dcKey.IsMedia)
+	dcTag := fmt.Sprintf("DC%d%s", dcKey.DC, mediaTag)
 	dstTag := fmt.Sprintf("%s:%d", dst, port)
 
 	startTime := time.Now()
 	var upBytes, downBytes int64
 	var upPkts, downPkts int64
+	var hasError atomic.Int32 // 0 = no error, 1 = error
 
 	done := make(chan struct{}, 2)
 	var wg sync.WaitGroup
+
+	// Start heartbeat (ping/pong) to detect dead connections
+	go ws.StartPingLoop(30 * time.Second)
 
 	// Client -> WS
 	wg.Add(1)
@@ -608,7 +724,9 @@ func (s *Server) bridgeWS(clientConn net.Conn, ws *websocket.WebSocket, label st
 		defer wg.Done()
 		defer func() { done <- struct{}{} }()
 
-		buf := make([]byte, 65536)
+		bufPtr := bufPool.Get().(*[]byte)
+		buf := *bufPtr
+		defer bufPool.Put(bufPtr)
 		for {
 			n, err := clientConn.Read(buf)
 			if n > 0 {
@@ -631,6 +749,7 @@ func (s *Server) bridgeWS(clientConn net.Conn, ws *websocket.WebSocket, label st
 				if err != io.EOF {
 					s.logDebug("[%s] client->ws: %v", label, err)
 				}
+				hasError.Store(1)
 				return
 			}
 		}
@@ -648,6 +767,7 @@ func (s *Server) bridgeWS(clientConn net.Conn, ws *websocket.WebSocket, label st
 				if err != io.EOF {
 					s.logDebug("[%s] ws->client: %v", label, err)
 				}
+				hasError.Store(1)
 				return
 			}
 			n := len(data)
@@ -664,11 +784,19 @@ func (s *Server) bridgeWS(clientConn net.Conn, ws *websocket.WebSocket, label st
 
 	// Wait for either direction to close
 	<-done
-	ws.Close()
 	clientConn.Close()
 
 	// Wait for goroutines to finish
 	wg.Wait()
+
+	// Return WS to pool if still alive (reusable connection)
+	// Only reuse if no error occurred during the session
+	if ws != nil && hasError.Load() == 0 {
+		s.wsPool.Put(dcKey, ws)
+		s.logDebug("[%s] %s (%s) WS returned back to pool", label, dcTag, dstTag)
+	} else if ws != nil {
+		ws.Close()
+	}
 
 	elapsed := time.Since(startTime).Seconds()
 	s.logInfo("[%s] %s (%s) session closed: ^%s (%d pkts) v%s (%d pkts) in %.1fs",
@@ -683,7 +811,9 @@ func (s *Server) bridgeTCP(conn, remoteConn net.Conn, label string) {
 
 	copyFunc := func(dst, src net.Conn, isUp bool) {
 		defer func() { done <- struct{}{} }()
-		buf := make([]byte, 65536)
+		bufPtr := bufPool.Get().(*[]byte)
+		buf := *bufPtr
+		defer bufPool.Put(bufPtr)
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
@@ -713,9 +843,13 @@ func (s *Server) bridgeTCP(conn, remoteConn net.Conn, label string) {
 
 func (s *Server) warmupPool() {
 	s.logInfo("WS pool warmup started for %d DC(s)", len(s.dcOpt))
-	for dc, targetIP := range s.dcOpt {
+	for dc := range s.dcOpt {
 		for isMedia := range []int{0, 1} {
 			dcKey := pool.DCKey{DC: dc, IsMedia: isMedia == 1}
+			targetIP := s.getTargetIP(dc, isMedia == 1)
+			if targetIP == "" {
+				continue
+			}
 			domains := s.getWSDomains(dc, isMedia == 1)
 			go func(dcKey pool.DCKey, targetIP string, domains []string) {
 				for s.wsPool.NeedRefill(dcKey) {
@@ -771,15 +905,33 @@ func (s *Server) getWSDomains(dc int, isMedia bool) []string {
 	}
 
 	if isMedia {
+		// Media/CDN домены — расширенный список для надёжной загрузки картинок и видео
+		// Основано на community reports (Issues #5, #72, #199) и hosts-конфигурациях OpenWRT
 		return []string{
 			fmt.Sprintf("kws%d-1.web.telegram.org", dc),
 			fmt.Sprintf("kws%d.web.telegram.org", dc),
+			fmt.Sprintf("kws%d-2.web.telegram.org", dc),
+			fmt.Sprintf("pluto-%d.web.telegram.org", dc),
+			"pluto.web.telegram.org",
+			"venus.web.telegram.org",
 		}
 	}
 	return []string{
 		fmt.Sprintf("kws%d.web.telegram.org", dc),
 		fmt.Sprintf("kws%d-1.web.telegram.org", dc),
 	}
+}
+
+func (s *Server) getTargetIP(dc int, isMedia bool) string {
+	if isMedia {
+		if ip, ok := s.dcOptMedia[dc]; ok {
+			return ip
+		}
+	}
+	if ip, ok := s.dcOpt[dc]; ok {
+		return ip
+	}
+	return ""
 }
 
 func (s *Server) mediaTag(isMedia bool) string {
@@ -795,12 +947,17 @@ func (s *Server) formatBlacklist() string {
 	}
 
 	var entries []string
-	for dcKey := range s.wsBlacklist {
+	now := time.Now()
+	for dcKey, blTime := range s.wsBlacklist {
 		mediaTag := ""
 		if dcKey.IsMedia {
 			mediaTag = "m"
 		}
-		entries = append(entries, fmt.Sprintf("DC%d%s", dcKey.DC, mediaTag))
+		remaining := blTime.Sub(now)
+		if remaining > 0 {
+			entries = append(entries, fmt.Sprintf("DC%d%s(%dm%ds)", dcKey.DC, mediaTag,
+				int(remaining.Minutes()), int(remaining.Seconds())%60))
+		}
 	}
 	sort.Strings(entries)
 	return strings.Join(entries, ", ")

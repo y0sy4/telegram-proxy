@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Flowseal/tg-ws-proxy/internal/config"
-	"github.com/Flowseal/tg-ws-proxy/internal/proxy"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/config"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/proxy"
 )
 
 var server *proxy.Server

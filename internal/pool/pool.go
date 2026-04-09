@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Flowseal/tg-ws-proxy/internal/websocket"
+	"github.com/y0sy4/tg-ws-proxy-go/internal/websocket"
 )
 
 const (
@@ -24,11 +24,10 @@ type pooledWS struct {
 }
 
 type WSPool struct {
-	mu        sync.Mutex
-	idle      map[DCKey][]*pooledWS
-	refilling map[DCKey]bool
-	poolSize  int
-	maxAge    time.Duration
+	mu       sync.Mutex
+	idle     map[DCKey][]*pooledWS
+	poolSize int
+	maxAge   time.Duration
 }
 
 func NewWSPool(poolSize int, maxAge time.Duration) *WSPool {
@@ -39,10 +38,9 @@ func NewWSPool(poolSize int, maxAge time.Duration) *WSPool {
 		maxAge = DefaultMaxAge
 	}
 	return &WSPool{
-		idle:      make(map[DCKey][]*pooledWS),
-		refilling: make(map[DCKey]bool),
-		poolSize:  poolSize,
-		maxAge:    maxAge,
+		idle:     make(map[DCKey][]*pooledWS),
+		poolSize: poolSize,
+		maxAge:   maxAge,
 	}
 }
 
@@ -58,7 +56,7 @@ func (p *WSPool) Get(key DCKey) *websocket.WebSocket {
 		bucket = bucket[1:]
 		age := now.Sub(pws.created)
 
-		if age > p.maxAge || pws.ws == nil {
+		if age > p.maxAge || pws.ws == nil || pws.ws.IsClosed() {
 			if pws.ws != nil {
 				pws.ws.Close()
 			}
@@ -66,12 +64,10 @@ func (p *WSPool) Get(key DCKey) *websocket.WebSocket {
 		}
 
 		p.idle[key] = bucket
-		p.scheduleRefill(key)
 		return pws.ws
 	}
 
 	p.idle[key] = bucket
-	p.scheduleRefill(key)
 	return nil
 }
 
@@ -85,21 +81,8 @@ func (p *WSPool) Put(key DCKey, ws *websocket.WebSocket) {
 	})
 }
 
-func (p *WSPool) scheduleRefill(key DCKey) {
-	if p.refilling[key] {
-		return
-	}
-	p.refilling[key] = true
-}
-
 func (p *WSPool) NeedRefill(key DCKey) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.idle[key]) < p.poolSize
-}
-
-func (p *WSPool) SetRefilling(key DCKey, refilling bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.refilling[key] = refilling
 }
